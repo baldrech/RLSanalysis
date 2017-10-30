@@ -1,0 +1,1353 @@
+---
+title: "Exploring RLS data"
+author: "Asta Audzijonyte"
+date: "21 August 2017"
+output: 
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc:yes
+---
+
+### Exploring RLS data set for TAS and VIC - bassian ecoregion
+
+*This project has two main goals: *
+
+1) Develop a protocol that to identify species and locations to be included in regional models size spectrum models. We want to have a somewhat automated procedure to identify key groups important for models. For that we need to assess the spatial scale over which locations can be pooled and one model applied. Next, we need to assess which species should be included, based on the frequency of occurrence, abundance or other factors defining ecological importance (invasive species). Initially we plan to have a model at the level of ecoregion and start with the Bassian ecoregion. However, if locations in one ecoregions are too different based on their species composition we need to split them into several models. 
+
+2) Develop a protocol to extract all available information about species from publicly available databases (fishbased, Thorson et al. 2017 life-history parameter paper, Rick's thermal optima and any other data) and group this information to provide key parameters required for size spectrum models. 
+
+*While exploring RLS data we also want to answer the following questions* 
+
+*1)* Find out the of main species in each locality and in the bioregion. The criteria to define main species might be: threshold abundance, biomass, occurrence overall, occurrence in recent years (invaders), keystone species, vulnerable species. 
+
+*2)* How many species are unique to localities and which species are found everywhere? Group by locality (and year) and match species names among localities. This should help to identify specialist and generalist species within a bioregion or at other spatial scales
+
+*3)* Are there any trends emerging: 
+a) Is there a temporal trend in maximum recorded size (include all bioregions) for each species? (note, this is different from Stuart-Smith 2017 who looked at the community size)
+b) Is there a trend in mean size of a species (all bioregions and Bassian bioregion)? 
+c) Is there a trend in abundance/biomass over the entire bioregion, and in separate localities? 
+d) Is there a trend in a number of recorded species? 
+
+*4)* Explore similarity among localities in the Bassian ecoregion 
+Can we pool all localities and have one general Bassian ecoregion model, or are some localities too different (west and east for example) that at least two models are needed. Also look whether there is a temporal trend in similarity among locations (do MDS analysis)
+
+*5)* Download available species parameters that can be useful in developing the model 
+a) some parameters can be obtained from rfishbase 
+b) get life-history parameters from Thorson et al. approach
+c) compare these parameters to what is available in RLS. How useful they are?
+
+*6)* Get information on site grouping
+At the moment sites are grouped by "Locality" field, but Rick said the Locality term is not clearly defined. Instead we should group sites by 
+a) geographic proximity - so extract coordinates and pool them 
+b) geography and important oceanographic and biogeographical boundaries - e.g. Victoria could be pooled with North Tasmania, Eastern and Western Tasmania should be separated. We need to talk to experts to identify this, but at this stage simple MDS might show main distinctions. 
+c) site exposure. The RLS dataset does not have exposure records, but Nicole A Hill has a model for exposure, so I need to get exposure scores for RLS data (it may not have records for the MPA survery sites, which is the site names that begin with letter M). There is a paper in MEPS about it, so I need to check it out 
+d) protection status.  German and Rick has data on protection status of different sites (and a paper on effects), so it would be good to associated site names with protection level 
+
+*Some other thoughts from discussion with Rick*
+1) What defines communities? a) temperature, b) depth (not important for this data which is mostly shallow), c) geography (biogeographical boundaries), d) exposure (Bathurst harbor is a unique assemblage, might be worth excluding. Port davey sites in the chanell are the ones I don't want to use)
+
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE}
+
+#this chunk includes initial data manipulations and does not need to be run every time 
+rm(list = ls()) # clear memory
+
+library(tidyverse)
+
+# First read all the data in 
+rls_all <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/RLSmpa.csv")
+
+#This data set contains both old MPA records and new, more standardised, RLS records. They are identified with the first letter of the SurveyID field (M or R). We need to add an extra column for this, so we can filter out only one set of records for some analyses. 
+MorR <- substr(rls_all$SurveyID,1,1)
+
+#I want to split the date column into years and months separately and create new columns and get rid of the sampling hour. This a clumsy way to do it, but it worked
+
+year <- substr(rls_all$SurveyDate, 1,10) #sample the first 10 characters and get rid of the time sampled
+year1 <- strsplit(year, "/") #split by / #split the date into day, month and year
+sdatet <- matrix(unlist(year1),ncol=3,byrow=TRUE) #turn the list into matrix
+year2 <- substr(sdatet[,3],1,4) #sample the first four characters in the year column to get rid of the empty space
+date <- cbind(sdatet[,c(1,2)],year2) #create a matrix date 
+dateN <- apply(date,2,as.numeric) #turn that into numeric values rather than integer 
+colnames(dateN) <- c("day", "month", "year")
+rls_all <- cbind(rls_all,dateN, MorR) #add the new columns to the main dataframe
+
+#Creat a new column that will include first three letter of the location name, latitude and year, eg. Bic_419_17 means Bicheno, 41.9 degrees, year 2017
+locat <- rls_all[[6]]
+locat <- substr(rls_all[[6]],1,3) #pick relevants bits from different columns. First three letters of the location name
+latt1 <-  substr(rls_all[[3]],2,3) #first two values of the lattitude 
+latt2 <- substr(rls_all[[3]],5,5) # minutes of the latitude
+locab <- paste(locat, latt1, latt2, sep='') #concatenate them 
+ye <-substr(rls_all[[28]],3,4)
+locyear <- paste(locab,ye, sep='_')
+rls_all <- cbind(locyear,rls_all) #add to the main data
+
+#remove all the temporary variables from clumsy coding
+rm(year, year1, sdatet, year2, date, dateN, locat, latt1, latt2, locab, ye)
+
+#Creat two extra columns, which will have NA values for years before 2000 and before 2009. This will be used to check the number of distinct years speces appears after a certain time 
+ye2000 = rep(NA, length(rls_all$year))
+ye2010 = rep(NA, length(rls_all$year))
+
+for (i in 1:length(ye2000)) {
+    if (rls_all$year[i] > 1999) {
+      ye2000[i] <- rls_all$year[i] }
+    if (rls_all$year[i] > 2009) {
+      ye2010[i] <- rls_all$year[i] }
+}
+
+rls_all = cbind(rls_all, ye2000, ye2010)
+
+save(rls_all, file="C:/Users/astaa/Dropbox/asta/RLS/rlsall.RData") # save the file
+
+##
+
+#now select only the bassian ecoregion 
+rls_bas <- rls_all %>%
+  filter(Ecoregion == "Bassian")
+
+#save this data frame in a tibble format for easier display, subsampling only relevant columns
+save(rls_bas, file="C:/Users/astaa/Dropbox/asta/RLS/rlsbas.RData") # save the file, because it takes a long time to read it in 
+
+
+
+```
+
+####Summary of localities and main vertebrate species 
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+rm(list = ls()) # clear memory
+
+## create a useful multiplot function 
+
+library(tidyverse)
+library(ggmap)
+#library(ggplot2)
+#library(cowplot)
+#library(vegan)
+
+load(file="C:/Users/astaa/Dropbox/asta/RLS/rlsbas.RData")
+#load(file="C:/Users/aud007/Dropbox/asta/RLS/rlsbas.RData")
+
+count(rls_bas, rls_bas$`Site name`)
+nsites <- unique(rls_bas$`Site name`) 
+length(nsites) 
+
+# there are 470 sites. Too many! We probably do not need them, just focus on Locations
+
+#how many locations do we have? 
+
+nlocat <- unique(rls_bas$Location) # we have 36 locations 
+
+locobs = count (rls_bas, Location) %>% #gives a 36x2 table number of observations in each location. 
+      arrange(desc(n))
+
+knitr::kable(locobs)
+
+#now let's use dplyr to explore the data 
+
+#look at the number of vertebrate locations 
+locVert <- rls_bas %>% 
+    filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
+           group_by(Location) %>% 
+           summarise (latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year), dep_min = min(Depth), dep_max = max(Depth)) %>%
+      arrange(desc(latt)) %>%
+        rename("Mean lattitude" = latt, "Mean longitude" = long, "No vertebrate sp" = nsp, "No years sampled" = year, "Min depth" = dep_min, "Max_depth" = dep_max)
+
+knitr::kable(locVert)
+
+## plot locations on a map 
+
+tasmania = get_map(location = c(lon = 145, lat = -40), zoom = 6, maptype = "satellite")
+
+ggmap(tasmania, extent = "panel", legend = "bottomright") +
+geom_point(aes(x = locVert$`Mean longitude`, y = locVert$`Mean lattitude`), data = locVert, size = 3, color = "orange") +
+scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))  
+
+# Alternatively only plot locations with >5 years of data 
+
+locVertLong <- filter (locVert, locVert$`No years sampled` > 5)
+
+ggmap(tasmania, extent = "panel", legend = "bottomright") +
+geom_point(aes(x = locVertLong$`Mean longitude`, y = locVertLong$`Mean lattitude`), data = locVertLong, size = 3, color = "orange") + scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))  
+
+knitr::kable(locVertLong)
+
+## RQ2 - what is the best field to use for species consistency? RecordedSpecies? 
+## use taxonomic_name & filter by method 1
+## RLS - species, frequency_explorer (draw a polygon and click on images)
+## average number of species per survey - check if anything is filtered out before calculating average number of species per survey
+  
+####
+
+#First filter out species that have only been observed over a certain number of years 
+mainVertOccur <- rls_bas  %>% 
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
+      summarise (years = n_distinct(year), years2000 = n_distinct(ye2000), years2010 = n_distinct(ye2010), dep_min = min(Depth), dep_max = max(Depth), sizeMax = max(SizeClass), latt = round(mean(SiteLat),3), lattMin = round(min(SiteLat),3), lattMax = round(max(SiteLat),3), lattRange = round((max(SiteLat) - min(SiteLat)),3), long = round(mean(SiteLong),3)) %>%
+        filter(years > 3) %>% #if years > 4 we have 122 species
+        arrange(desc(years))
+
+MainVertListOc <- mainVertOccur[[1]] ## list of vertebrate species filtered by occurrence in years
+
+#Second calculate mean abundance and biomass of these species per survey and filter out rare species 
+VertPerSurvey <- rls_bas  %>% 
+  filter (TAXONOMIC_NAME %in% MainVertListOc) %>% 
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER, SurveyID) %>% ## group by day, month, year and location - survery
+        summarise (abundSur = round(sum(Abundance),2), biomSur = round(sum(BioMass, na.rm=TRUE),2), sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2), sizeMax = round(max(SizeClass),2)) %>%
+          group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
+            summarise(meanAbun = round(mean(abundSur),3), meanBiom = round(mean(biomSur),3), meanSize = round(mean(sizeMean),3), maxSize = round(mean(sizeMax),3)) %>%
+              filter (meanAbun > 2 | meanBiom > 1000)
+
+MainVertList <- VertPerSurvey[[1]] ## final list of common vertebrates with 3 filters applied = 86 vertebrates
+
+#RQ3 = what are reasoable criteria? Is surveyID the right field to summarise survey data
+
+#then get all sorts of details for these species 
+mainVertDetails <- rls_bas  %>% 
+  filter (TAXONOMIC_NAME %in% MainVertList) %>% 
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
+      summarise (years = n_distinct(year), years2000 = n_distinct(ye2000), years2010 = n_distinct(ye2010), dep_min = min(Depth), dep_max = max(Depth), latt = round(mean(SiteLat),3), lattMin = round(min(SiteLat),3), lattMax = round(max(SiteLat),3), lattRange = round((max(SiteLat) - min(SiteLat)),3), long = round(mean(SiteLong),3)) 
+
+VertDetails <- cbind(VertPerSurvey, mainVertDetails)
+VertDetails <- VertDetails[,-c(10:14)]
+
+knitr::kable(VertDetails)
+
+```
+
+Table above shows that Port Phillip (VIC) has a lot more species, and that thre are five main groups of locations with longer term sampling: Ninepin, Tinderbox, Maria, Bicheno, Port Phillip. There are 47 vertebrate species with records from >15 years, but different filters should be discussed and decided.
+
+
+#### Comparing mean biomass, abundance, size, sp richness among localities
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+## Next look at mean number of vertebrates+cephalopods and invertebrates per survey 
+
+## try only surveys that are starting with R and see whether RLS data has higher number of species per survey
+## include lobsters and abalone and seastars and periwincles (turboungulatus), centrostephanus and heliocedaris
+
+MeanVertLocation <- rls_bas  %>% 
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") |  CLASS == "Cephalopoda" ) %>% 
+ # filter ( PHYLUM == "Chordata" | CLASS  == "Cephalopoda") %>% 
+  #  filter (Location == "Port Phillip Heads") %>%
+   #    group_by (Location, day, month, year) %>% ## group by day, month, year and location - survery
+  #RQ4 - does location, month, day give a broader overview? It pools several surveys so comparison is harder 
+          group_by (Location, SurveyID) %>%
+        summarise (totabundSur = round(sum(Abundance),2), totbiomSur = round(sum(BioMass, na.rm=TRUE),2), sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2), sizeMax = round(max(SizeClass),2), species = n_distinct(TAXONOMIC_NAME), latt = mean(SiteLat)) %>%
+          group_by(Location) %>%
+            summarise(meanTotAbun = round(mean(totabundSur), 2), sdTotAbun = sd(totabundSur), cases = n(), meanTotBiom = round(mean(totbiomSur), 2), sdTotBiom = sd(totbiomSur), meanSize = round(mean(sizeMean), 2), sdMeanSize = sd(sizeMean), sizeMaxAll = round(max(sizeMax),2), sdMaxSize = sd(sizeMax), meanSpecies = round(mean(species),2), sdmeanSpp = sd(species), lattLoc = mean(latt)) %>%
+                mutate(seTotAbun = sdTotAbun/sqrt(cases), seTotBiom = sdTotBiom/sqrt(cases), seMeanSize = sdMeanSize/sqrt(cases), seMaxSize = sdMaxSize/sqrt(cases), semeanSpecies = sdmeanSpp/sqrt(cases)) %>%
+        #  filter (years > 4) %>%
+              arrange(desc(lattLoc))
+
+ggplot(MeanVertLocation, aes (x = reorder(Location, -lattLoc), y = meanSpecies)) +
+    geom_bar(stat =  "identity", fill= "grey") + 
+        geom_errorbar(aes(ymin = meanSpecies - semeanSpecies, ymax = meanSpecies + semeanSpecies), width = 0.6) +
+            xlab ("Location name") + ylab("Mean number of species per survery (+/- SE)") + 
+                theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  
+ggplot(MeanVertLocation, aes (x = reorder(Location, -lattLoc), y = MeanVertLocation$meanTotAbun)) +
+    geom_bar(stat =  "identity", fill= "grey") + 
+        geom_errorbar(aes(ymin = MeanVertLocation$meanTotAbun - MeanVertLocation$seTotAbun, ymax = MeanVertLocation$meanTotAbun + MeanVertLocation$seTotAbun), width = 0.6) +
+            xlab ("Location name") + ylab("Mean abundance per survey (+/- SE)") + 
+                theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(MeanVertLocation, aes (x = reorder(Location, -lattLoc), y = MeanVertLocation$meanTotBiom)) +
+    geom_bar(stat =  "identity", fill= "grey") + 
+        geom_errorbar(aes(ymin = MeanVertLocation$meanTotBiom - MeanVertLocation$seTotBiom, ymax = MeanVertLocation$meanTotBiom + MeanVertLocation$seTotBiom), width = 0.6) +
+            xlab ("Location name") + ylab("Mean biomass per survey (+/- SE)") + 
+                theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(MeanVertLocation, aes (x = reorder(Location, -lattLoc), y = sizeMaxAll)) +
+    geom_bar(stat =  "identity", fill= "grey") + 
+        geom_errorbar(aes(ymin = sizeMaxAll - seMaxSize, ymax = sizeMaxAll + seMaxSize), width = 0.6) +
+            xlab ("Location name") + ylab("Max size in a survery (+/- SE)") + 
+                theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(MeanVertLocation, aes (x = reorder(Location, -lattLoc), y = MeanVertLocation$meanSize)) +
+    geom_bar(stat =  "identity", fill= "grey") + 
+        geom_errorbar(aes(ymin = MeanVertLocation$meanSize - MeanVertLocation$seMeanSize, ymax = MeanVertLocation$meanSize + MeanVertLocation$seMeanSize), width = 0.6) +
+            xlab ("Location name") + ylab("Mean size per survey (+/- SE)") + 
+                theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+#RQ5 = any thoughts? Ninepin seems to be dominated by small species 
+
+## Ninepin is dominated by small planktivores Trachinops. Huon island sites have less kelp and are dominated by small fish. THese sites are more sheltered. In Ninepin you get tanins coming down the Huon river. Less habitat for predatory species  
+
+#plot_grid(p1, p2, p3, p4, p5)
+```
+
+
+### Species overlap among locations monthly and yearly
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+#Question = in how many locations a species has been recorded in a given month/year
+
+VertLocatOverlap <- rls_bas  %>% 
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
+      group_by (TAXONOMIC_NAME, month, year) %>% ## group by month, year and species
+        summarise (lococc = n_distinct(Location), totabund = round(sum(Abundance),2), totbiom = round(sum(BioMass, na.rm=TRUE),2)) %>%
+          group_by(TAXONOMIC_NAME) %>%
+            summarise(meanLocations = round(mean(lococc), 2), sdLocations = round(sd(lococc),2), cases = n(), meanAbun = round(mean(totabund), 2), meanBiom = round(mean(totbiom), 2)) %>%
+                filter (cases > 4) %>% ## only include species that have been observed in more than 4 different months throughout the whole study
+                  filter (meanAbun > 2 | meanBiom >99) 
+
+
+ggplot(VertLocatOverlap, aes (x = reorder(TAXONOMIC_NAME, -meanLocations), y = meanLocations)) +
+    geom_bar(stat =  "identity", fill= "grey") + 
+        geom_errorbar(aes(ymin = meanLocations - sdLocations, ymax = meanLocations + sdLocations), width = 0.1) +
+            xlab ("129 vertebrates species") + ylab("Mean number of locations per month/year (+/- SD)") + 
+                theme(axis.text.x = element_blank())   
+
+## Most species are observed only in 1-2 locations in a given month and year 
+
+VertLocatOverlapY <- rls_bas  %>% 
+  filter (PHYLUM == "Chordata", GENUS != "NA", CLASS != "Ascidiacea") %>% 
+      group_by (TAXONOMIC_NAME, year) %>% ## group by month, year and species
+        summarise (lococc = n_distinct(Location), totabund = round(sum(Abundance),2), totbiom = round(sum(BioMass, na.rm=TRUE),2)) %>%  #here we will sum the abundance and biomass of species over all size classes and surverys over the entire year
+          group_by(TAXONOMIC_NAME) %>%
+            summarise(meanLocations = round(mean(lococc), 2), sdLocations = round(sd(lococc),2), cases = n(), meanAbun = round(mean(totabund), 2), meanBiom = round(mean(totbiom), 2)) %>%
+                filter (cases > 1) %>% ##only inlclude species that have been observed in more than 2 years
+                  filter (meanAbun > 9 | meanBiom >99) # only include species with threshold mean TOTAL yearly abundance 
+
+ggplot(VertLocatOverlapY, aes (x = reorder(TAXONOMIC_NAME, -meanLocations), y = meanLocations)) +
+    geom_bar(stat =  "identity", fill= "grey") + 
+        geom_errorbar(aes(ymin = meanLocations - sdLocations, ymax = meanLocations + sdLocations), width = 0.1) +
+            xlab ("152 vertebrates species") + ylab("Mean number of locations per year (+/- SD)") + 
+                theme(axis.text.x = element_blank()) 
+
+## RQ6 - any thoughts on that? Most species are recorded only in one location per month or year
+
+## Or apply more stringent filters on yearly record data 
+VertLocatOverlapYR <- VertLocatOverlapY  %>% 
+                 filter (cases > 5) %>% ##only inlclude species that have been observed in more than 2 years
+                  filter (meanAbun > 59 | meanBiom >5999) %>%
+                      arrange(desc(meanLocations))
+
+ggplot(VertLocatOverlapYR, aes (x = reorder(TAXONOMIC_NAME, -meanLocations), y = meanLocations)) +
+    geom_bar(stat =  "identity", fill= "grey") + 
+        geom_errorbar(aes(ymin = meanLocations - sdLocations, ymax = meanLocations + sdLocations), width = 0.1) +
+            xlab ("55 common vertebrates species") + ylab("Mean number of locations per year (+/- SD)") + 
+                theme(axis.text.x = element_blank()) 
+
+CommonVertsByLoc <- VertLocatOverlapYR[[1]]  # List of the most common vertebrate species in descending order by the number of locations they occur on average
+
+CommonVertsByLoc 
+
+#temp = which(CommonVertsByLoc %in% CommonVertList)
+
+```
+
+Conclusions. On average there are ca 20 (6) species per locality per survery. There are big differences in the mean abundances per survey (NorthWest and Ninepin has large), but less in biomass. This correlates with on average smaller mean size of species in these sites. It looks that these sites have more small species with high abundances, so perhaps more dominated by small pelagics. 
+
+Species overlap among locations is not that large. A few most common species occur in 10-15 locations in a given year, but many are only found in ca 5 locations (out of 36 total and 26 that have been sampled in more than 2 years). Trimming out the rare species does not affect the location overlap plot much, so the species that occur in many locations are also those that are most abundant and occur in more than 5 years 
+
+*TO DO #1*: look at the temporal species overlap in one location. Look at 12 locations that have been sampled in > than 10 years and check the overlap. 
+
+*TO DO #2*: species area accumuation curve per location. Some locations have more sites and sampling effort than others (per year or overall), so diversity by location might be affected by sampling effort (although I am looking at characteristics per survey!). Just suggest that RecordedSpecies should be replaced with "current species name", but I am not sure 
+
+
+Are new species occurrences recorded close to MPAs? 
+#### Summary of main vertebrate species and redistributions throughout the Bassian ecoregion  
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+## Identify species that are occuring mostly in the last 10 years, but remove species that have only been observed in one year
+
+mainVertInvad <- rls_bas  %>% 
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
+      summarise (years = n_distinct(year), years2000 = n_distinct(ye2000), years2010 = n_distinct(ye2010), recent = years2010 - years) %>% #258 species in total 
+        filter(recent > -1, years > 1)  
+
+# Out of 258 vertebrate and cephalopod species, 123 have been observed only since 2010. If we exclude species that have been seen in only 1 year, then out of 187 species there are 52 that have been observed only since 2010 
+
+## 
+
+InvaderVertList <- mainVertInvad[[1]] #List of 52 recently arrived vertebrates and cephalopods
+
+## List of 116 vertebrate species (out of 247) that have only been observed since 2010
+InvaderVertList  #just give a list for the output
+
+#And then look which of these common species are recent invaders - 20 out of 50 it turns out
+tempvect = which((InvaderVertList %in% MainVertList) ==TRUE)
+CommonInvaders = InvaderVertList[tempvect]
+
+## It turns out that 12 out of the 87 most common species are those found only occurring since 2010
+CommonInvaders
+
+## this will change when taxonomic name is used. Also exclude those without species names. 
+## Arripis trutta might be recovering from fishing, they are not reef species but just show up on the reef 
+## Check out Rick's paper that documments disapearance of some species from tassie
+
+```
+
+####Species redistributions findings
+
+Out of the total of 258 vertbrate and cephalopod species recorded in the Bassian ecoriog, 123 have been found only since 2010. If we exclude species that have been seen in only 1 year, then out of 187 species there are 52 that have been observed only since 2010. 12 out of the 87 most common species are those found only occurring since 2010
+
+There are NO species that have been recorded in the past,  but not seen since 2010, so we have not recorded extinction, only invasions. There is only 1 species that has been observed at least 5 times in total but only once since 2010 - Gnathanacanthus goetzii. This spsecies has been observed 14 times in total,  but only once since 2010. There are only 3 species that have been observed at least 4 times in total but only once since 2010 (but then this is almost an average). Rick confirms that this species has declined in abundance. Also the handfish are disapearing
+
+Conclusion - there are not many (only 1) species that have disapeared, but there are 116 species (HALF of all vertebrates!) out of 247 that have only been recorded since 2010. This could also be due to observation bias
+
+A question: if half of the species in Bassian ecoregion were observed since 2010 only, we don't know whether this is due to increased number of surveys/experience, or are these really redistributing species. Better analyses are required for that. 
+RQ6. Also is there evidence that new species are recorded closer to MPAs, so previously rare species are spreading
+
+####Barplots of abudance and biomass for 50 most abundant species in the Bassian ecoregion
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+mainVertSurvey <- VertPerSurvey
+par(mfrow = c(2, 2))
+par(cex = 0.7)
+par(mar = c(4.0, 4.0, 0.5, 0.5), oma = c(0.2, 0.2, 0.2, 0.2))
+
+mainVertSurvey <- mainVertSurvey %>% arrange(desc(meanAbun))
+barplot (mainVertSurvey$meanAbun, space = c(1,2), names.arg = mainVertSurvey$GENUS, cex.names = 0.5, las = 3, main = "Mean abundance per survey", ylab = "Abundance, ind.")
+
+mainVertSurvey <- mainVertSurvey %>% arrange(desc(meanBiom))
+barplot (mainVertSurvey$meanBiom, space = c(1,2), names.arg = mainVertSurvey$GENUS, cex.names = 0.5, las = 3, main = "Mean biomass per survey")
+
+mainVertSurvey <- mainVertSurvey %>% arrange(meanSize)
+
+barplot(mainVertSurvey$meanAbun, names.arg = mainVertSurvey$TAXONOMIC_NAME, cex.names = 0.5, las = 3, main = "Mean abundance per survey, ranked by size")
+
+barplot(mainVertSurvey$meanBiom, names.arg = mainVertSurvey$TAXONOMIC_NAME, cex.names = 0.5, las = 3, main = "Mean biomass per survey, ranked by size")
+
+## TODO - plot them on one graph (two barplots side by side) and also colour code species that mostly  occur in the last 10 years. Also improve labelling 
+
+```
+
+### Looking at the size spectrum slopes: with and without small pelagics
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+## First, identify main common small pelagic species. We may want to exclude them, as they might skew the spectra 
+PelagicSpp = c("Spratelloides robustus", "Spratelloides spp.", "Hyperlophus vittatus", "Leptatherina presbyteroides", "Atherinason hepsetoides")
+
+#RQ7 - any more main small pelagics?
+
+## Generate data for size/abundance
+SizeTotal <- rls_bas  %>% 
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
+  #Various filters to reduce the data
+    filter (SizeClass <210) %>%
+   # filter (year > 2010) %>%
+      group_by (year, Location, SizeClass) %>% #group by survey 
+    # group_by (SurveyID, SizeClass) %>%
+        summarise (abund = sum(Abundance), biom = sum(BioMass, na.rm=TRUE)) %>%
+          group_by(SizeClass) %>% 
+            summarise (abundS = round(mean(abund),2), biomS = round(mean(biom, na.rm=TRUE),2)) %>%
+                 arrange(SizeClass)
+
+SizeTotalnoP <- rls_bas  %>% ## data set without small pelagics
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
+      filter (!(TAXONOMIC_NAME %in% PelagicSpp)) %>% 
+    #Various filters to reduce the data
+       filter (SizeClass <210) %>%
+       # filter (year > 2010) %>%
+        group_by (year, Location, SizeClass) %>% #group by survey 
+          # group_by (SurveyID, SizeClass) %>%
+            summarise (abund = sum(Abundance), biom = sum(BioMass, na.rm=TRUE)) %>%
+             group_by(SizeClass) %>% 
+                summarise (abundS = round(mean(abund),2), biomS = round(mean(biom, na.rm=TRUE),2)) %>%
+                     arrange(SizeClass)
+
+par(mfrow = c(2, 2))
+par(cex = 0.7)
+par(mar = c(4.0, 4.0, 0.5, 0.5), oma = c(0.2, 0.2, 0.2, 0.2))
+
+barplot(SizeTotal$abundS, space = c(1,2), names.arg = SizeTotal$SizeClass, cex.names = 0.5, las = 3, main = "Abundance at size, all surveys and spp") # does not look very interesting
+
+barplot(SizeTotal$biomS, space = c(1,2), names.arg = SizeTotal$SizeClass, cex.names = 0.5, las = 3, main = "Biomass at size, all surveys and spp") # does not look very interesting 
+
+barplot(SizeTotalnoP$abundS, space = c(1,2), names.arg = SizeTotalnoP$SizeClass, cex.names = 0.5, las = 3, main = "Abundance at size, all surveys, no pelagics", xlab= "Size class") # does not look very interesting
+
+barplot(SizeTotalnoP$biomS, space = c(1,2), names.arg = SizeTotalnoP$SizeClass, cex.names = 0.5, las = 3, main = "Biomass at size, all surveys, no pelagics", xlab= "Size class") # does not look very interesting 
+
+## or look at logarithmic abundance 
+### - the size classes should be transormed to a linear and logarithmic scale
+
+par(mfrow = c(2, 2))
+par(cex = 0.7)
+par(mar = c(4.0, 4.0, 0.5, 0.5), oma = c(0.2, 0.2, 0.2, 0.2))
+
+barplot(log(SizeTotal$abundS), space = c(1,2), names.arg = SizeTotal$SizeClass, cex.names = 0.5, las = 3, main = "Abundance at size, all surveys and spp") # does not look very interesting
+
+barplot(log(SizeTotal$biomS+1), space = c(1,2), names.arg = SizeTotal$SizeClass, cex.names = 0.5, las = 3, main = "Biomass at size, all surveys and spp") # does not look very interesting 
+
+barplot(log(SizeTotalnoP$abundS), space = c(1,2), names.arg = SizeTotalnoP$SizeClass, cex.names = 0.5, las = 3, main = "Abundance at size, all surveys, no pelagics", xlab= "Size class") # does not look very interesting
+
+barplot(log(SizeTotalnoP$biomS+1), space = c(1,2), names.arg = SizeTotalnoP$SizeClass, cex.names = 0.5, las = 3, main = "Biomass at size, all surveys, no pelagics", xlab= "Size class") # does not look very interesting 
+
+## high abundande at ca 5cm is not an artefact, because there are many species that spend a few years in the 5cm size class but they go through 2cm class very quickly. Constant recruitment assumed in the model means that there is a constant influx of small indviduals coming in, but in reality they come in pulses and get eaten out or grow up 
+
+# does increase in PPRM through size of predator stabilize communities
+
+```
+
+
+### List of species names in english for future analyses
+Hyperlophus vittatus - sand sprat (herring, up to 10cm, RLS up to 5cm)
+Spratelloides robustus - blue spart (herring, RLS up to 5cm)
+Leptatherina presbyteroides - silverfish (silverides, up to 11 cm, RLS up to 5cm,), endemic S Australian
+Atherinason hepsetoides - smallscale hardyhead (silversides, up to 9cm, RLS up to 7.5cm), endemic S Australian
+Trachinops caudimaculatus - southern hulafish (roundheads, up to 15cm, RLS up to 40cm ?!), endemic S Australian
+Seriolella punctata - silver warehou, lmax - 66cm, RLS - 15cm (Very small), demersal shelf, feed on tunicates
+Pomatomus saltatrix - tailor/bluefish, predator, schooling, lmax- 1.3m, RLS - 25cm, popular game fish
+
+
+#### Trends in mean total abundance and biomass per survey for 122 "native" and "new" species
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+library(nlme)
+
+#First select species that have at least 5 years of observation  
+
+VertList5y <- rls_bas  %>% 
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, ORDER) %>%
+        summarise (years = n_distinct(year)) %>%
+          filter (years > 4)
+
+VertSpecies5y = VertList5y[[1]] #122 species
+
+#Create a dataset to analyses vertebrate trends (only for those that occur in more than 4 years)
+VertTrends <- rls_bas  %>% 
+  filter (TAXONOMIC_NAME %in% VertSpecies5y) %>% #chose only cases for selected species
+   #   group_by (TAXONOMIC_NAME, GENUS, CLASS, ORDER, day, month, year) %>%
+   group_by (TAXONOMIC_NAME, GENUS, CLASS, ORDER, SurveyID, year) %>%
+        summarise (abund = round(sum(Abundance),2), biom = round(sum(BioMass, na.rm=TRUE),2)) %>%
+          group_by(TAXONOMIC_NAME, GENUS, CLASS, ORDER, year) %>%
+            summarise(abundMean = round(mean(abund), 2), biomMean = round(mean(biom), 2))
+
+
+### Next - apply a simple linear regression and look at slopes
+
+# Abundance trends 
+AbundRegr = data.frame(matrix(NA, nrow = length(VertSpecies5y), ncol = 3))
+
+for (i in 1:length(VertSpecies5y)) {
+  tempvect = which(VertTrends$TAXONOMIC_NAME %in% VertSpecies5y[i]==TRUE) #get only the records of one species
+  lmAbun <- lm(abundMean ~ year, data = VertTrends[tempvect,]) #simple linear regression 
+  AbundRegr[i,] <- c(VertSpecies5y[i], round(lmAbun$coefficients,3))
+
+}
+
+# Biomass trends 
+BiomRegr = data.frame(matrix(NA, nrow = length(VertSpecies5y), ncol = 3))
+
+for (i in 1:length(VertSpecies5y)) {
+  tempvect = which(VertTrends$TAXONOMIC_NAME %in% VertSpecies5y[i]==TRUE) #get only the records of one species
+  lmBiom <- lm(biomMean ~ year, data = VertTrends[tempvect,]) #simple linear regression 
+  BiomRegr[i,] <- c(VertSpecies5y[i], round(lmBiom$coefficients,3))
+
+}
+
+
+LargeSlopeAb = which(as.numeric(AbundRegr[,3])> 50) ## there are four species with very high slopes, big increase in abundance: "Arripis trutta", "Leptatherina presbyteroides", "Parapriacanthus elongatus" ,  "Trachinops caudimaculatus"
+AbundRegrM <- AbundRegr[-LargeSlopeAb,] #create a dataset to remove the outliers
+
+LargeSlopeBiom = which(as.numeric(BiomRegr[,3])> 1500) ## there are four species with very high slopes, big increase in biomass: "Arripis trutta"        "Dasyatis brevicaudata" "Mendosoma allporti"    "Trygonoptera mucosa
+BiomRegrM <- BiomRegr[-LargeSlopeBiom,] #create a dataset to remove the outliers
+
+
+# Create vectors for abundance and biomass of "natives" and "new" species
+vectInvAb = which(AbundRegrM[,1] %in% InvaderVertList ==TRUE)
+vectNonInvAb = which(AbundRegrM[,1] %in% InvaderVertList ==FALSE)
+vectInvBio = which(BiomRegrM[,1] %in% InvaderVertList ==TRUE)
+vectNonInvBio = which(BiomRegrM[,1] %in% InvaderVertList ==FALSE)
+
+## Now plot the histogram of slope values
+
+par(mfrow = c(2, 2))
+par(cex = 0.7)
+par(mar = c(2.5, 4.0, 0.5, 0.5), oma = c(0.2, 0.2, 0.2, 0.2))
+
+hist(as.numeric(AbundRegrM[vectNonInvAb,3]), breaks=100, xlim = c(-10, 10), main = "Abundance regression slopes: natives")
+abline(v=0, col = 'red')
+hist(as.numeric(BiomRegrM[vectNonInvBio,3]), breaks=100, xlim = c(-1000, 1000), main = "Biomass regression slopes: natives")
+abline(v=0, col = 'red')
+## Generally it seems that more "native" species are increasing in abundance and biomass
+
+hist(as.numeric(AbundRegrM[vectInvAb,3]), breaks=200, xlim = c(-5, 5), main = "Abundance regression slopes: new spp")
+abline(v=0, col = 'red')
+hist(as.numeric(BiomRegrM[vectInvBio,3]), breaks=100, xlim = c(-1500, 1500), main = "Biomass regression slopes: new spp")
+abline(v=0, col = 'red')
+##For invaders the trends are not clear, because these are only species found since 2010, so only 7 observations max
+```
+
+
+### Trends in mean and maximum size for the 122 common Bassian vertebrate species (Bassian data only or all data)
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+## I need to separate sites within and outside MPAs for this analyses
+
+## MPAS are identified with 1 for Governance or NT and NTZ (no take or no take zone)
+## German can send MPA categories 
+
+load(file="C:/Users/astaa/Dropbox/asta/RLS/rlsall.RData")
+
+VertTrendsAllSize <- rls_all  %>%  ## entire data set
+  filter (TAXONOMIC_NAME %in% VertSpecies5y) %>% #chose only cases for selected species
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, ORDER, day, month, year) %>%
+        summarise (sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2), sizeMax = max(SizeClass)) %>%
+          group_by(TAXONOMIC_NAME, GENUS, CLASS, ORDER, year) %>%
+            summarise(sizeMean = round(mean(sizeMean), 2), sizeMaxY = max(sizeMax))
+
+VertTrendsSize <- rls_bas  %>%   ##only Bassian data set
+  filter (TAXONOMIC_NAME %in% VertSpecies5y) %>% #chose only cases for selected species
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, ORDER, day, month, year) %>%
+        summarise (sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2), sizeMax = max(SizeClass)) %>%
+          group_by(TAXONOMIC_NAME, GENUS, CLASS, ORDER, year) %>%
+            summarise(sizeMean = round(mean(sizeMean), 2), sizeMaxY = max(sizeMax))
+
+
+# MeanSize trends 
+SizeRegr = data.frame(matrix(NA, nrow = length(VertSpecies5y), ncol = 3))
+
+for (i in 1:length(VertSpecies5y)) {
+  tempvect = which(VertTrendsSize$TAXONOMIC_NAME %in% VertSpecies5y[i]==TRUE) #get only the records of one species
+  lmSize <- lm(sizeMean ~ year, data = VertTrendsSize[tempvect,]) #simple linear regression 
+  SizeRegr[i,] <- c(VertSpecies5y[i], round(lmSize$coefficients,3))
+
+}
+
+# Max Size trends 
+SizeMaxRegr = data.frame(matrix(NA, nrow = length(VertSpecies5y), ncol = 3))
+
+for (i in 1:length(VertSpecies5y)) {
+  tempvect = which(VertTrendsSize$TAXONOMIC_NAME %in% VertSpecies5y[i]==TRUE) #get only the records of one species
+  lmSizeMax <- lm(sizeMaxY ~ year, data = VertTrendsSize[tempvect,]) #simple linear regression 
+  SizeMaxRegr[i,] <- c(VertSpecies5y[i], round(lmSizeMax$coefficients,3))
+
+}
+
+## same for the entire data set 
+
+SizeRegrAll = data.frame(matrix(NA, nrow = length(VertSpecies5y), ncol = 3))
+
+for (i in 1:length(VertSpecies5y)) {
+  tempvect = which(VertTrendsAllSize$TAXONOMIC_NAME %in% VertSpecies5y[i]==TRUE) #get only the records of one species
+  lmSize <- lm(sizeMean ~ year, data = VertTrendsAllSize[tempvect,]) #simple linear regression 
+  SizeRegrAll[i,] <- c(VertSpecies5y[i], round(lmSize$coefficients,3))
+
+}
+
+# Max Size trends 
+SizeMaxRegrAll = data.frame(matrix(NA, nrow = length(VertSpecies5y), ncol = 3))
+
+for (i in 1:length(VertSpecies5y)) {
+  tempvect = which(VertTrendsAllSize$TAXONOMIC_NAME %in% VertSpecies5y[i]==TRUE) #get only the records of one species
+  lmSizeMax <- lm(sizeMaxY ~ year, data = VertTrendsAllSize[tempvect,]) #simple linear regression 
+  SizeMaxRegrAll[i,] <- c(VertSpecies5y[i], round(lmSizeMax$coefficients,3))
+
+}
+
+## and to plot them, removing a few outlers (hence limits on the x axis). The outliers seem to only inlcude species with very few records
+
+par(mfrow = c(2, 2))
+par(cex = 0.7)
+par(mar = c(3.0, 4.0, 0.5, 0.5), oma = c(0.2, 0.2, 0.2, 0.2))
+
+hist(as.numeric(SizeRegr[,3]), breaks=100, xlim = c(-2.5, 2.5), main = "Mean size regression slope: Bassian")
+#Get main vertebrates and their mean characteristics across all years and locations 
+abline(v=0, col = 'red')
+
+hist(as.numeric(SizeMaxRegr[,3]), breaks=100, xlim = c(-5, 5), main = "Max size regression slope: Bassian")
+#Get main vertebrates and their mean characteristics across all years and locations 
+abline(v=0, col = 'red')
+
+hist(as.numeric(SizeRegrAll[,3]), breaks=100, xlim = c(-2.5, 2.5), main = "Mean size regression slope: all")
+#Get main vertebrates and their mean characteristics across all years and locations 
+abline(v=0, col = 'red')
+
+hist(as.numeric(SizeMaxRegrAll[,3]), breaks=100, xlim = c(-5, 5), main = "Max size regression slope: all")
+#Get main vertebrates and their mean characteristics across all years and locations 
+abline(v=0, col = 'red')
+
+##TODO - better statistical analyses
+
+```
+
+
+### MDS analyses for the Bassian locations
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+#First will try MDS on locations in the main 5 well sampled areas: Ninepin, Tinderbox, Maria, Bicheno, Port Phillip   
+
+library(vegan)
+
+load(file="C:/Users/astaa/Dropbox/asta/RLS/rlsbas.RData")
+
+#first creat a couple of extra columns to help sort out only the main 5 areas 
+loc <- substr(rls_bas$Location, 1,4) #sample the first 4 of location name
+locy <- paste(loc, rls_bas$year, sep="")
+rls_bas = cbind(loc, locy, rls_bas)
+
+#Now identify the most common vertebreate speices 
+mainVertSurvey <- rls_bas  %>% 
+  filter (PHYLUM == "Chordata", GENUS != "NA", CLASS != "Ascidiacea") %>% 
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, ORDER, day, month, year) %>% ## group by day, month, year groups them by survey
+        summarise (abund = round(sum(Abundance),2), biom = round(sum(BioMass, na.rm=TRUE),2), sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2), sizeMax = round(max(SizeClass),2)) %>%
+          group_by(TAXONOMIC_NAME, GENUS, CLASS, ORDER) %>%
+            summarise(abundMean = round(mean(abund), 2), biomMean = round(mean(biom), 2), sizeMean = round(mean(sizeMean), 2), sizeMaxAll = round(max(sizeMax),2), years = n_distinct(year)) %>%
+          filter (years > 1) %>%
+              filter (biomMean > 1000 | abundMean >10) %>%  #This criterion gives 49 species. This is mean abundance or biomass per survey
+                arrange(desc(abundMean))
+
+CommonVertList <- mainVertSurvey[[1]]
+
+#Create location x abundance matrix for the 15 locations with long sampling series
+dataforMDS <- rls_bas %>%
+  filter (TAXONOMIC_NAME %in% CommonVertList) %>%
+        filter (loc =="Nine" | loc =="Tind" | loc =="Mari" | loc =="Bich" | loc =="Port") %>% 
+            group_by(Location, day, month, year, TAXONOMIC_NAME) %>%
+                summarise (abund = round(sum(Abundance),3)) %>%
+                    group_by(Location, TAXONOMIC_NAME) %>%
+                        summarise(abundMean = round(mean(abund), 3))
+            
+#create a location/species abundance matrix and convert it from list to a numeric matrix
+
+dataMDS <- spread(dataforMDS, key = Location, value = abundMean, fill = 0)
+dataMDSm <- matrix(unlist(dataMDS),ncol=15,byrow=FALSE) #turn the list into matrix
+dataMDSt <- dataMDSm[,c(2:15)]
+storage.mode(dataMDSt) <- "numeric"
+rownames(dataMDSt) <- dataMDSm[,1]
+loc <- colnames(dataMDS)
+loc = c("Bich", "BicE", "BicI", "MarE", "MarI", "MarV", "NinE", "NinI", "Dave", "DavC", "PPB", "PPH", "TinE", "TinI")
+colnames(dataMDSt) <- loc
+dataMDS <-t(dataMDSt)
+
+##then do the MDS
+mdstest = metaMDS(dataMDS,  k=2) #no convergence 
+#mdstest = metaMDS(dataMDSmt, distance="bray",k=3,trymax=200)
+#bas_dist = vegdist(dataMDS)
+
+stressplot(mdstest)
+plot(mdstest)
+
+par(mfrow=c(1,1))
+
+ordiplot(mdstest,type="n")
+orditorp(mdstest,display="sites",cex=1,air=0.1)
+orditorp(mdstest,display="species",col="red",air=0.01)
+
+
+```
+
+### Do MDS for three time periods: 1990s, 2000s, 2010s
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+#ONLY USE YEARS UNTIL 2000
+dataforMDS90s <- rls_bas %>%
+  filter (TAXONOMIC_NAME %in% CommonVertList) %>%
+        filter (loc =="Nine" | loc =="Tind" | loc =="Mari" | loc =="Bich" | loc =="Port") %>% 
+          filter (year < 2000) %>%
+            group_by(Location, day, month, year, TAXONOMIC_NAME) %>%
+                summarise (abund = round(sum(Abundance),3)) %>%
+                    group_by(Location, TAXONOMIC_NAME) %>%
+                        summarise(abundMean = round(mean(abund), 3))
+            
+#create a location/species abundance matrix and convert it from list to a numeric matrix
+
+dataMDS90s <- spread(dataforMDS90s, key = Location, value = abundMean, fill = 0)
+dataMDSm90s <- matrix(unlist(dataMDS90s),ncol=12,byrow=FALSE) #turn the list into matrix
+dataMDSt90s <- dataMDSm90s[,c(2:12)]
+storage.mode(dataMDSt90s) <- "numeric"
+rownames(dataMDSt90s) <- dataMDSm90s[,1]
+loc <- colnames(dataMDS90s)
+loc = c("BicE", "BicI", "MarE", "MarI", "MarV", "NinE", "NinI", "Dave", "PPH", "TinE", "TinI")
+colnames(dataMDSt90s) <- loc
+dataMDS90s <-t(dataMDSt90s)
+
+##then do the MDS
+mdstest90s = metaMDS(dataMDS90s,  k=2) 
+
+stressplot(mdstest90s)
+plot(mdstest90s)
+
+ordiplot(mdstest90s,type="n")
+orditorp(mdstest90s,display="sites",cex=1,air=0.1)
+#orditorp(mdstest90s,display="species",col="red",air=0.01)
+
+###################
+## SAME FOR THE 2000s
+dataforMDS00s <- rls_bas %>%
+  filter (TAXONOMIC_NAME %in% CommonVertList) %>%
+        filter (loc =="Nine" | loc =="Tind" | loc =="Mari" | loc =="Bich" | loc =="Port") %>% 
+          filter (year > 1999, year <2010) %>%
+            group_by(Location, day, month, year, TAXONOMIC_NAME) %>%
+                summarise (abund = round(sum(Abundance),3)) %>%
+                    group_by(Location, TAXONOMIC_NAME) %>%
+                        summarise(abundMean = round(mean(abund), 3))
+            
+#create a location/species abundance matrix and convert it from list to a numeric matrix
+
+dataMDS00s <- spread(dataforMDS00s, key = Location, value = abundMean, fill = 0)
+dataMDSm00s <- matrix(unlist(dataMDS00s),ncol=14,byrow=FALSE) #turn the list into matrix
+dataMDSt00s <- dataMDSm00s[,c(2:14)]
+storage.mode(dataMDSt00s) <- "numeric"
+rownames(dataMDSt00s) <- dataMDSm00s[,1]
+loc <- colnames(dataMDS00s)
+loc = c("Bich", "BicE", "BicI", "MarE", "MarI", "MarV", "NinE", "NinI", "Dave", "PPB" , "PPH", "TinE", "TinI")
+colnames(dataMDSt00s) <- loc
+dataMDS00s <-t(dataMDSt00s)
+
+##then do the MDS
+mdstest00s = metaMDS(dataMDS00s,  k=2) 
+
+stressplot(mdstest00s)
+plot(mdstest00s)
+
+ordiplot(mdstest00s,type="n")
+orditorp(mdstest00s,display="sites",cex=1,air=0.1)
+#orditorp(mdstest90s,display="species",col="red",air=0.01)
+
+
+### AND FINALLY FOR 2010s
+dataforMDS10s <- rls_bas %>%
+  filter (TAXONOMIC_NAME %in% CommonVertList) %>%
+        filter (loc =="Nine" | loc =="Tind" | loc =="Mari" | loc =="Bich" | loc =="Port") %>% 
+          filter (year > 2009) %>%
+            group_by(Location, day, month, year, TAXONOMIC_NAME) %>%
+                summarise (abund = round(sum(Abundance),3)) %>%
+                    group_by(Location, TAXONOMIC_NAME) %>%
+                        summarise(abundMean = round(mean(abund), 3))
+            
+#create a location/species abundance matrix and convert it from list to a numeric matrix
+
+dataMDS10s <- spread(dataforMDS10s, key = Location, value = abundMean, fill = 0)
+dataMDSm10s <- matrix(unlist(dataMDS10s),ncol=15,byrow=FALSE) #turn the list into matrix
+dataMDSt10s <- dataMDSm10s[,c(2:15)]
+storage.mode(dataMDSt10s) <- "numeric"
+rownames(dataMDSt10s) <- dataMDSm10s[,1]
+loc <- colnames(dataMDS10s)
+loc = c("Bich", "BicE", "BicI", "MarE", "MarI", "MarV", "NinE", "NinI", "Dave", 'DavC', "PPB" , "PPH", "TinE", "TinI")
+colnames(dataMDSt10s) <- loc
+dataMDS10s <-t(dataMDSt10s)
+
+##then do the MDS
+mdstest10s = metaMDS(dataMDS10s,  k=2) 
+
+
+stressplot(mdstest10s)
+plot(mdstest10s)
+
+ordiplot(mdstest10s,type="n")
+orditorp(mdstest10s,display="sites",cex=1,air=0.1)
+#orditorp(mdstest90s,display="species",col="red",air=0.01)
+
+par(mfrow = c(1, 3))
+par(cex = 0.7)
+par(mar = c(4.0, 4.0, 0.5, 0.5), oma = c(0.2, 0.2, 0.2, 0.2))
+
+ordiplot(mdstest90s,type="n", main="1990s")
+orditorp(mdstest90s,display="sites",cex=1.5,air=0.1)
+
+ordiplot(mdstest00s,type="n", main="2000s", ylim = c(-1,1))
+orditorp(mdstest00s,display="sites",cex=1.5,air=0.1)
+
+ordiplot(mdstest10s,type="n", main="2010s")
+orditorp(mdstest10s,display="sites",cex=1.5,air=0.1)
+
+```
+
+
+
+mainInvSp <- rls_bas %>% 
+  filter (PHYLUM != "Chordata") %>% #about 1/3 of records (54000) are for inverts
+    group_by (TAXONOMIC_NAME) %>%
+      summarise (abunMax = max(Abundance), abunMean = mean(Abundance), years = n_distinct(year)) %>%
+        filter(years > 3, abunMax > 5, abunMean >2) 
+
+MainInvList = mainInvSp[[1]] #58 species 
+MainSpList = c(MainVertList, MainInvList)
+
+temp = rls_bas$TAXONOMIC_NAME %in% MainSpList
+tempInd = which(temp==TRUE)
+rls_basMainSp <- rls_bas[tempInd,]
+
+
+#HERE
+rls_basMainSp5loc <- rls_
+
+#First will do MDS on 5 main areas based on vertebrates only 
+
+
+
+
+#Subsamples from rls_bas only records that include main vertebrates 
+
+
+
+CommLoc <- rls_bas %>%
+  filter(PHYLUM == "Chordata") %>%
+    group_by(Location) %>% 
+        summarise (ny = n_distinct(year)) %>%
+          filter (ny > 4)
+
+LocVector <- CommLoc[[1]]      
+
+indL = rls_basCV$Location %in% LocVector
+CommLocInd = which(indL==TRUE)              
+rls_basRED <- rls_basCV[CommLocInd,]   #rls_bas dataset reduced to exclude rare species and rare locations
+
+
+#now select from the rls_bas dataset only observations for the common species and locations 
+
+
+
+
+
+rls_5 <- rls_bas %>%
+    filter (rls_bas$loc =="Nine" | rls_bas$loc =="Tind" | rls_bas$loc =="Mari" | rls_bas$loc =="Bich" | rls_bas$loc =="Port") 
+
+
+
+
+```
+
+
+#### Parameters from rfishbase
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE}
+#extract data from fishbase for the most common vertebrates. I save the file so we don't need to evalue this chunk every time 
+
+library(rfishbase)
+
+mainFish <- rls_bas %>% 
+  filter (PHYLUM == "Chordata", CLASS == "Actinopterygii" | CLASS == "Elasmobranchii", SPECIES_EPITHET != "NA") %>% 
+    group_by (RecordedSpecies, GENUS, CLASS, FAMILY, ORDER) %>%
+      summarise (abunMean = round(mean(Abundance),2), abunMax = max(Abundance), latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), years = n_distinct(year), dep_min = min(Depth), dep_max = max(Depth), sizeMean = mean(SizeClass), sizeMax = max(SizeClass)) %>%
+        filter(years > 2, abunMax > 4) %>% #if use abunMax >3 end up with 74 observations, if >4 then with 76 observations
+        arrange(GENUS, abunMean)
+
+## Common vertebrate species (111 of them) in a vector
+FishSpecies <- mainFish[[1]]
+
+#To get a table of common species I want to download data from fishbase using rfishbase
+fishlist <- validate_names(FishSpecies)
+#there are 98 common fish speices. No record found only for Pseudocaranx georgianus
+
+#first get some general species characteristics 
+fishChar <- species(FishSpecies, fields = c("sciname", 'FBname', 'BodyShapeI', 'DemersPelag', 'LongevityWild', 'Vulnerability', 'Length', 'Weight', 'LifeCycle', 'Comments', 'DateModified')) #this returns records for 90 fish species
+
+fishCharM <- matrix(unlist(fishChar[,c(1:8)]),ncol=8,byrow=FALSE)
+
+colnames(fishCharM) = c("sciname", 'FBname', 'BodyShapeI', 'DemersPelag', 'LongevityWild', 'Vulnerability', 'Length', 'Weight')
+
+#ecology - only one record per species
+ecology <- ecology(FishSpecies, fields = c("Neritic", "Intertidal", "Estuaries", "Mangroves", "Herbivory2", "FeedingType", "DietTroph", "DietSeTroph", "DietTLu", "DietseTLu", "DietRemark", "AddRems", "Benthic", "Demersal", "SoftBottom", "HardBottom", "SeaGrassBeds", "CoralReefs")) ##55 species returned
+ecologytemp = ecology[,c(1,3:6,9:12,15:20)]
+
+ecologyM <- matrix(unlist(ecologytemp),ncol=15,byrow=FALSE)
+colnames(ecologyM) = c("sciname", "Neritic", "Intertidal", "Estuaries", "Mangroves", "DietTroph", "DietSeTroph", "DietTLu", "DietseTLu", "Benthic", "Demersal", "SoftBottom", "HardBottom", "SeaGrassBeds", "CoralReefs")
+
+#fecundity- several records per species (many entries)
+fecund = fecundity(FishSpecies, fields = c("sciname", "Locality", "WeightMin", "FecundityMin", "LengthFecunMin", "FecundityMax", "WeightMax", "LengthFecunMax")) #only 13 species have records
+
+fecundSp <- fecund %>%
+    group_by(sciname) %>%
+      summarise_each(funs(mean))
+
+fecundity = fecundSp[,c(1,4,6,7,9)] #this is the final fecundity data and has only 8 species :(
+fecundityM  <- matrix(unlist(fecundity),ncol=5,byrow=FALSE)
+colnames(fecundityM) = c("sciname", "FecundityMin", "LengthFecunMin", "FecundityMax", "LengthFecunMax")
+    
+
+#maturity 
+matur  = maturity(FishSpecies) #get all maturity data 
+matur  = mattest[,c( "sciname", "Sex", "AgeMatMin", "tm", "LengthMatMin", "Lm", "Locality", "Comment")]
+
+maturity <- matur %>%
+  group_by(sciname) %>%
+    summarise(agemat = mean(AgeMatMin), tm = mean(tm), lenmat =mean(LengthMatMin), Lm = mean(Lm)) %>%
+      filter (agemat != "NA" | tm != "NA" | lenmat != "NA" | Lm != "NA")  #final maturity data of 19 species
+
+maturityM <- matrix(unlist(maturity),ncol=5,byrow=FALSE)
+colnames(maturityM) = c("sciname", "agemat", "tm", "lenmat", "Lm")
+
+##VB and M characteristics 
+popgrowth = popgrowth(FishSpecies) #give 84 rows, with many species repeated, keep this for general reference
+
+popgrSp <- popgrowth %>%
+    group_by(sciname) %>%
+      summarise(popgrowth_n = n(), Loomin = min(Loo), Loomax = max(Loo), Loo = mean(Loo), numb = mean(Number), r2= mean(r2), SELoo = mean (SE_Loo), TLinf = mean (TLinfinity), Kmin = min(K), Kmax = max (K), K = mean(K), seK = mean(SE_K), t0 = mean (to), LogKLogLoo = mean(LogKLogLoo), lw_b = mean(b), lw_C = mean(C), tmax = mean (tmax), tm = mean (tm), M = mean(M), Lm = mean(Lm), Temp = mean(Temperature))
+# this is a useful (potentially) summmary for 22 species 
+
+popgrowthM <- matrix(unlist(popgrSp),ncol=22,byrow=FALSE)
+colnames(popgrowthM) = colnames(popgrSp)
+
+##
+popchar = popchar(FishSpecies)
+
+popcharSp <- popchar %>%
+  group_by(sciname) %>%
+    summarise(popchar_n = n(), Wmax = mean(Wmax), Lmax = mean(Lmax), tmax = mean(tmax))
+
+popcharM <- matrix(unlist(popcharSp),ncol=5,byrow=FALSE)
+colnames(popcharM) = colnames(popcharSp)
+
+###
+repro = reproduction(FishSpecies)  # some general species reproductive characteristics, but limited and not very useful so far
+ration = ration(FishSpecies) #no data available for ration
+predat = predators(FishSpecies) #some data on predators of some species, but too scaterred to be useful I suspect
+oxygen = oxygen(FishSpecies) #no data on that
+
+###
+
+mainVert <- rls_bas  %>% 
+  filter (PHYLUM == "Chordata", GENUS != "NA") %>% 
+      group_by (RecordedSpecies, GENUS, CLASS, FAMILY, ORDER) %>%
+      summarise (abunMean = round(mean(Abundance),2), abunMax = max(Abundance), years = n_distinct(year), years2000 = n_distinct(ye2000), years2010 = n_distinct(ye2010), dep_min = min(Depth), dep_max = max(Depth), sizeMean = mean(SizeClass), sizeMax = max(SizeClass), latt = mean(SiteLat), lattMin = min(SiteLat), lattMax = max(SiteLat), lattRange = (max(SiteLat) - min(SiteLat)), long = mean(SiteLong)) %>%
+        filter(years > 2, abunMax > 4) %>% #if use abunMax >3 end up with 74 observations, if >4 then with 76 observations
+        arrange(RecordedSpecies, abunMean)
+
+## now we need to merge different matrices into one large table with all currently available info 
+#mainVert, fishCharM, ecologyM, fecundityM, maturityM, popgrowthM, popcharM
+
+m1 <- merge(x = mainVert, y = fishCharM, by.x = "RecordedSpecies", by.y = "sciname", all.x = TRUE) 
+m2 <- merge(x = m1, y = ecologyM, by.x = "RecordedSpecies", by.y = "sciname", all.x = TRUE) 
+m3 <- merge(x = m2, y = fecundityM, by.x = "RecordedSpecies", by.y = "sciname", all.x = TRUE) 
+m4 <- merge(x = m3, y = maturityM, by.x = "RecordedSpecies", by.y = "sciname", all.x = TRUE) 
+m5 <- merge(x = m4, y = popgrowthM, by.x = "RecordedSpecies", by.y = "sciname", all.x = TRUE) 
+m6 <- merge(x = m5, y = popcharM, by.x = "RecordedSpecies", by.y = "sciname", all.x = TRUE) 
+
+VertData <- m6 %>%
+  arrange(m6, desc(abunMean)) %>%
+    mutate (abunMeanMax = abunMean/abunMax, sizeMeanMax = sizeMean/sizeMax)
+
+save(VertData, file="C:/Users/astaa/Dropbox/asta/RLS/VertData.RData") # save the file, because it takes a long time to read it in 
+load("C:/Users/astaa/Dropbox/asta/RLS/VertData.RData")
+
+write.csv (VertData, file = "C:/Users/astaa/Dropbox/asta/RLS/VertData.csv", na = "NA")
+
+```
+
+
+### Life history prediction parameters (Thorson et al. 2017)
+
+
+
+#skip this chunk
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval=F, echo=F}
+### SKIP THIS
+
+## It is possible that the check above is biased, because if species has been found for many years, perhaps it is mean abundance is lower. So do the same test but only on years since 2010
+mainVertSurvey2010 <- rls_bas  %>% 
+  filter (PHYLUM == "Chordata", GENUS != "NA", CLASS != "Ascidiacea") %>% 
+      filter (year > 2009) %>%
+      group_by (RecordedSpecies, GENUS, CLASS, ORDER, day, month, year) %>%
+        summarise (abund = round(sum(Abundance),2), biom = round(sum(BioMass, na.rm=TRUE),2), sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2)) %>%
+          group_by(RecordedSpecies, GENUS, CLASS, ORDER) %>%
+            summarise(abundMean = round(mean(abund), 2), biomMean = round(mean(biom), 2), sizeMean = round(mean(sizeMean), 2), years = n_distinct(year)) %>%
+            filter (years > 1) %>%
+              filter (biomMean > 3500 | abundMean >35) 
+  
+#The same common criteria now  44species. 
+
+CommonVertList2010 <- mainVertSurvey2010[[1]]
+
+tempvect = which((CommonVertList %in% CommonVertList2010) ==TRUE) #41 species are the same in the common vertebrate list
+tempvect2 = which((InvaderVertList %in% CommonVertList2010) ==TRUE) #41 species are the same in the common vertebrate list
+CommonInvaders2010 = InvaderVertList[tempvect2] ## still 12 out of 44 common recent species are invaders
+which((CommonInvaders2010 %in% CommonInvaders) ==TRUE) ## 12 of the invader species are the same based on this criterion
+
+```
+
+
+
+
+###next look at invertebrate species
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+#load the large VertData table for printing (105x71)
+load(file="C:/Users/astaa/Dropbox/asta/RLS/VertData.RData")
+
+#now I want to identify the most abundant invertebrate species to see if we at least should include key invertebrates 
+
+mainInv <- rls_bas %>% 
+  filter (PHYLUM != "Chordata", GENUS != "NA") %>% #about 1/3 of records (54000) are for inverts
+    group_by (GENUS, CLASS, PHYLUM) %>%
+      summarise (abun = round(mean(Abundance),2), abunMax = max(Abundance), latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), years = n_distinct(year), dep_min = min(Depth), dep_max = max(Depth)) %>%
+        filter(years > 2, abunMax > 4) %>%
+        arrange(PHYLUM)
+VertData = arrange(VertData, desc(abunMean))
+
+knitr::kable(VertData)
+knitr::kable(mainInv)
+
+```
+
+The tables are somwhat overwhelming as they still have too many species/genera, but it is a bit of reduction. 
+
+### Maximum and mean vertebrate size through time 
+
+This is analysed by smaller and bigger species. Smaller species are those for which maximum recorded size is <50 cm
+It looks to me that there are no clear trends, and the analysis is very crude and probably incorrect. I am only selecting species for which there are at least 10 years of data, and fitting a natural spline with n=2 (so a trendline)
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE}
+
+VertSize <- rls_bas %>% 
+  filter (PHYLUM == "Chordata", GENUS != "NA") %>% 
+    group_by (RecordedSpecies, GENUS, year) %>%
+      summarise (abunMean = round(mean(Abundance),2), abunMax = max(Abundance), latt = mean(SiteLat), long = mean(SiteLong), dep_min = min(Depth), dep_max = max(Depth), sizeMean = mean(SizeClass), sizeMax = max(SizeClass)) %>%
+           summarise (nyears = n_distinct(year)) %>% 
+              filter (nyears > 9)
+
+#This tells us that the are 45 vert species that have been recorded in more than 5 years and whichc have maximum abundance of at least 5 individuals observed at least once (remove rare species). 
+#I select species that have been recorded in If maximum abundance criterion is not applied there are 112 species 
+
+VertSizeList <- VertSize[[1]]  #82 vertebrate species that occur in 10 or more years
+
+#now select only those observaton that include the 112 species 
+tempvect = rls_bas$RecordedSpecies %in% VertSizeList
+VertSizeInd = which(tempvect==TRUE)
+rls_basVerSize <- rls_bas[VertSizeInd,] # this has 96 thousand records
+
+#first plot species for which maximum size is <50
+smallVerts <- rls_basVerSize %>%
+    group_by (RecordedSpecies, GENUS, FAMILY, ORDER, CLASS) %>%
+      summarise(sizeMax = max(SizeClass)) %>%
+        filter (sizeMax < 50) %>% # filter out species that are never bigger than 50 cm
+          summarise (nsp = n_distinct(RecordedSpecies))
+
+SmallVertList = smallVerts[[1]] #37 species that are never bigger than 50 cm
+
+temp = VertSizeList %in% SmallVertList
+tempIn = which(temp==FALSE)
+LargeVertList = VertSizeList[tempIn] #other 45 species that can get bigger than 50 cm
+
+#datafile for plotting lengths
+len_plot <- rls_basVerSize %>%
+    group_by (RecordedSpecies, year) %>%
+      summarise(sizeMean = mean(SizeClass), sizeMax = max(SizeClass))
+
+years <- seq(from=1992,to=2017)
+
+##plot maximum size
+plot(x = years, y = years, ylab = "Max size", ylim = c(0, 50), type = "n")
+ for (i in 1:length(SmallVertList)) { 
+
+   plot_data <- len_plot %>%
+  filter(RecordedSpecies == SmallVertList[i]) %>%
+    arrange(year)
+
+lines(spline(x = plot_data$year, y = plot_data$sizeMax, method='n', n=2), col='gray')
+}
+
+
+plot(x = years, y = years, ylab = "Max size", ylim = c(0, 150), type = "n")
+ for (i in 1:length(LargeVertList)) { 
+
+   plot_data <- len_plot %>%
+  filter(RecordedSpecies == LargeVertList[i]) 
+
+lines(spline(x = plot_data$year, y = plot_data$sizeMax, method='n', n=2), col='gray')
+}
+
+#Plot average size
+plot(x = years, y = years, ylab = "Average size", ylim = c(0, 40), type = "n")
+ for (i in 1:length(SmallVertList)) { 
+
+   plot_data <- len_plot %>%
+  filter(RecordedSpecies == SmallVertList[i]) %>%
+    arrange(year)
+
+lines(spline(x = plot_data$year, y = plot_data$sizeMean, method='n', n=2), col='gray')
+}
+
+
+plot(x = years, y = years, ylab = "Average size", ylim = c(0, 150), type = "n")
+ for (i in 1:length(LargeVertList)) { 
+
+   plot_data <- len_plot %>%
+  filter(RecordedSpecies == LargeVertList[i]) 
+
+lines(spline(x = plot_data$year, y = plot_data$sizeMean, method='n', n=2), col='gray')
+}
+
+
+```
+
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE}
+
+#count the number of observationsn of each species in ecah location   
+
+VertByLoc_To2000 <- rls_bas %>% 
+       filter(year < 2000) %>% 
+        filter (PHYLUM == "Chordata") %>%
+          filter (Abundance > 1) %>%
+         group_by(Location) %>% 
+           summarise (nsp = n_distinct(SpeciesID))
+
+vert_plot <- rls_bas %>% 
+  filter(year < 2000, PHYLUM == "Chordata", Abundance > 1) %>% 
+          arrange(SiteLat) %>%
+           group_by(Location) %>% 
+           summarise (nsp = n_distinct(SpeciesID)) 
+
+locAll_more1 <- rls_bas %>% 
+  filter(Abundance > 1) %>% 
+           group_by(Location) %>% 
+           summarise (latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year)) 
+
+locAll <- rls_bas %>% 
+           group_by(Location) %>% 
+           summarise (latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year)) 
+
+MarIslRes <- rls_bas %>%
+  filter(Location == "Maria Island Reserve", PHYLUM == "Chordata") %>%
+    group_by(SPECIES_NAME, year) %>% 
+        #summarise_each (funs(min, max, mean), Abundance, SizeClass) 
+        summarise (mean(Abundance), mean(BioMass), mean(SizeClass), min(SizeClass), max(SizeClass))
+
+
+MarIslResN <- rls_bas %>%
+  filter(Location == "Maria Island Reserve", PHYLUM == "Chordata") %>%
+    group_by(SPECIES_NAME, year) %>% 
+        summarise(n = n())
+ 
+#I only want to choose species that occur in more than 2 years and that have more than 3 (5?) observations per year
+commSpecMIR <- MarIslResN %>%
+  filter(n > 4) %>% #remove cases where abundance in the year was < 5
+   group_by(SPECIES_NAME) %>%
+    summarise (n = n()) %>%
+      filter (n > 2) #remove cases where species was observed in fewer than 3 years 
+
+
+#filter out rare species 
+commVertAll <- rls_bas %>%
+  filter(PHYLUM == "Chordata") %>%
+    group_by(Location, SPECIES_NAME, year) %>% 
+        summarise(n = n()) %>%  # number of observations per location per species per year
+          filter (n >4) %>% #remove species which have been observed <5 times in a given year/location
+            group_by(SPECIES_NAME) %>%
+              summarise(n = n()) %>%
+                filter (n > 3) #remove cases where species was observed in fewer than 3 years: 74 species, and if fewers than 4 years then we have 66 species 
+
+VertVector <- commVertAll[[1]] ## list of 66 vert species to be used in MDS
+
+CommLoc <- rls_bas %>%
+  filter(PHYLUM == "Chordata") %>%
+    group_by(Location) %>% 
+        summarise (ny = n_distinct(year)) %>%
+          filter (ny > 4)
+
+LocVector <- CommLoc[[1]]      
+
+
+
+#now select from the rls_bas dataset only observations for the common species and locations 
+
+indV = rls_bas$SPECIES_NAME %in% VertVector
+CommVertInd = which(indV==TRUE)
+rls_basCV <- rls_bas[CommVertInd,]
+
+indL = rls_basCV$Location %in% LocVector
+CommLocInd = which(indL==TRUE)              
+rls_basRED <- rls_basCV[CommLocInd,]   #rls_bas dataset reduced to exclude rare species and rare locations
+
+
+###
+
+#select only vertebrates first 
+dataforMDS <- rls_basRED %>%
+    group_by(locyear, SPECIES_NAME) %>%
+      summarise (abun = mean(Abundance))
+
+#here I tried to treat locations and year independently, but there does not seem to be a clear trend in years
+
+#create a location/species abundance matrix and convert it (in a clumsy way) from list to a numeric matrix
+
+dataMDS <- spread(dataforMDS, key = locyear, value = abun, fill = 0)
+
+sdatet <- matrix(unlist(sdate),ncol=3,byrow=TRUE) #turn the list into matrix
+
+dataMDSm <- matrix(data = NA, nrow = dim(dataMDS)[1], ncol = dim(dataMDS)[2])
+
+colnames(dataMDSm) <- colnames(dataMDS)
+rownames(dataMDSm) <- dataMDS[[1]]
+
+for (i in 1:dim(dataMDS)[2]) {
+    dataMDSm[,i] <- c(as.double(dataMDS[[i]]))
+}
+
+dataMDSm <- round(dataMDSm[,-1],3)
+dataMDSmt <- t(dataMDSm)
+
+##now try to do the MDS
+library(vegan)
+
+bas_dist = vegdist(dataMDSmt)
+
+mdstest = metaMDS(dataMDSmt, k=2) #no convergence 
+mdstest = metaMDS(dataMDSmt, distance="bray",k=3,trymax=200)
+
+stressplot(mdstest)
+plot(mdstest)
+
+ordiplot(mdstest,type="n")
+orditorp(mdstest,display="species",col="red",air=0.01)
+orditorp(mdstest,display="sites",cex=0.5,air=0.01)
+
+
+set.seed(2)
+test = metaMDS(dataMDSm, k = 2)
+
+
+Y9295 <- rls_bas %>%
+    filter(PHYLUM == "Chordata", year < 1996) %>% 
+      group_by (SpeciesID, Location) %>%
+        summarise ( ab = mean(Abundance))
+
+Y9295d <- spread(data = Y9295, key = Location, value = ab, fill= 0)
+mode(Y9295d)
+
+
+colnames(dataNum) <- Y9295d[1,]
+spnames = as.vector(Y9295d[,1])
+rownames(dataNum) <- Y9295d[,1]
+
+
+mdsDat<-metaMDS(Y9295d,distance = "bray", k = 2, trymax = 50)
+
+
+plot (vert_plot$nsp)
+
+#shane's examples
+df_plot <- df_long %>% 
+  filter(m1 == 8, rb == 0.6, ra == 6, RSmax == 1.3,
+    Fm == levs[3], Prediction == "Opt_w") %>% 
+  arrange(s1)
+
+plot(x = df_plot$s1, y = df_plot$Value, type = "o", pch = 21, col = "red", bg = "red",
+  xaxs = "r", yaxs = "i", xlab = "", ylab = "", xlim = c(4.5, 9.5), ylim = c(0.0, 1.05))
+
+rls_bas %>% group_by(Location) %>% summarise(rls_bas, n_distinct(rls_bas$SpeciesID))
+
+
+
+n_distinct(rls_bas$SpeciesID, group_by= rls_bas$Location)
+
+
+
+#other potentially useful functions that were not used 
+date <- strtrim(rls_bas$SurveyDate, 10)
+n_distinct(rls_bas, Location) #
+
+```
+
