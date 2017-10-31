@@ -319,6 +319,7 @@ ggplot(MeanVertLocation, aes (x = reorder(Location, -lattLoc), y = MeanVertLocat
 
 ## Ninepin is dominated by small planktivores Trachinops. Huon island sites have less kelp and are dominated by small fish. THese sites are more sheltered. In Ninepin you get tanins coming down the Huon river. Less habitat for predatory species  
 
+
 #plot_grid(p1, p2, p3, p4, p5)
 ```
 
@@ -342,7 +343,7 @@ VertLocatOverlap <- rls_bas  %>%
 ggplot(VertLocatOverlap, aes (x = reorder(TAXONOMIC_NAME, -meanLocations), y = meanLocations)) +
     geom_bar(stat =  "identity", fill= "grey") + 
         geom_errorbar(aes(ymin = meanLocations - sdLocations, ymax = meanLocations + sdLocations), width = 0.1) +
-            xlab ("129 vertebrates species") + ylab("Mean number of locations per month/year (+/- SD)") + 
+            xlab ("vertebrates species") + ylab("Mean number of locations per month/year (+/- SD)") + 
                 theme(axis.text.x = element_blank())   
 
 ## Most species are observed only in 1-2 locations in a given month and year 
@@ -359,7 +360,7 @@ VertLocatOverlapY <- rls_bas  %>%
 ggplot(VertLocatOverlapY, aes (x = reorder(TAXONOMIC_NAME, -meanLocations), y = meanLocations)) +
     geom_bar(stat =  "identity", fill= "grey") + 
         geom_errorbar(aes(ymin = meanLocations - sdLocations, ymax = meanLocations + sdLocations), width = 0.1) +
-            xlab ("152 vertebrates species") + ylab("Mean number of locations per year (+/- SD)") + 
+            xlab ("vertebrates species") + ylab("Mean number of locations per year (+/- SD)") + 
                 theme(axis.text.x = element_blank()) 
 
 ## RQ6 - any thoughts on that? Most species are recorded only in one location per month or year
@@ -378,13 +379,14 @@ ggplot(VertLocatOverlapYR, aes (x = reorder(TAXONOMIC_NAME, -meanLocations), y =
 
 CommonVertsByLoc <- VertLocatOverlapYR[[1]]  # List of the most common vertebrate species in descending order by the number of locations they occur on average
 
-CommonVertsByLoc 
+CommonVertsByLoc ## 55 species that are common 
+## TODO - this should also include the key invertebrate species 
 
 #temp = which(CommonVertsByLoc %in% CommonVertList)
 
 ```
 
-Conclusions. On average there are ca 20 (6) species per locality per survery. There are big differences in the mean abundances per survey (NorthWest and Ninepin has large), but less in biomass. This correlates with on average smaller mean size of species in these sites. It looks that these sites have more small species with high abundances, so perhaps more dominated by small pelagics. 
+Conclusions. There are big differences in the mean abundances per survey (NorthWest and Ninepin has large), but less in biomass. This correlates with on average smaller mean size of species in these sites. It looks that these sites have more small species with high abundances, so perhaps more dominated by small pelagics. 
 
 Species overlap among locations is not that large. A few most common species occur in 10-15 locations in a given year, but many are only found in ca 5 locations (out of 36 total and 26 that have been sampled in more than 2 years). Trimming out the rare species does not affect the location overlap plot much, so the species that occur in many locations are also those that are most abundant and occur in more than 5 years 
 
