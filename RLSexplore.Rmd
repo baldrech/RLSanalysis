@@ -235,12 +235,11 @@ Table above shows that Port Phillip (VIC) has a lot more species, and that thre 
 ```{r warning=FALSE, message=FALSE, warning=FALSE}
 
 ## Next look at mean number of vertebrates+cephalopods and invertebrates per survey 
-## IMPORTANT! - what is one survey? If we group by unique surveyID then there are two numbers for each RLS survey, identified with -1 and -2. I added an extra column named 'Surv' where -1 and -2 are pooled into one survey. I am still sorting with Rick which one is correct and what is the equivalent for MPA surveys
 
 # summarise only RLS data and keep -1 and -2 separate
-MeanVertLocationR <- rls_bas  %>% 
+MeanVertLocation <- rls_bas  %>% 
   filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") |  CLASS == "Cephalopoda" ) %>% 
-  filter ( MorR == "R") %>% 
+  filter ( Method == "1") %>% 
   #  filter (Location == "Port Phillip Heads") %>%
    #    group_by (Location, day, month, year) %>% ## group by day, month, year and location - survery
   #RQ4 - does location, month, day give a broader overview? It pools several surveys so comparison is harder 
@@ -256,7 +255,7 @@ MeanVertLocationR <- rls_bas  %>%
 MeanVertLocationM <- rls_bas  %>% 
   filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") |  CLASS == "Cephalopoda" ) %>% 
   filter ( MorR == "M") %>% 
-  #  filter (Location == "Port Phillip Heads") %>%
+  filter (Method == "1") %>%
    #    group_by (Location, day, month, year) %>% ## group by day, month, year and location - survery
   #RQ4 - does location, month, day give a broader overview? It pools several surveys so comparison is harder 
           group_by (Location, SurveyID) %>%
@@ -266,24 +265,6 @@ MeanVertLocationM <- rls_bas  %>%
                 mutate(seTotAbun = sdTotAbun/sqrt(cases), seTotBiom = sdTotBiom/sqrt(cases), seMeanSize = sdMeanSize/sqrt(cases), seMaxSize = sdMaxSize/sqrt(cases), semeanSpecies = sdmeanSpp/sqrt(cases)) %>%
         #  filter (years > 4) %>%
               arrange(desc(lattLoc))
-
-#summarise only RLS data but pool -1 and -2 into one survey id
-MeanVertLocation2 <- rls_bas  %>% 
-  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") |  CLASS == "Cephalopoda" ) %>% 
-  filter ( MorR == "R") %>% 
-  #  filter (Location == "Port Phillip Heads") %>%
-   #    group_by (Location, day, month, year) %>% ## group by day, month, year and location - survery
-  #RQ4 - does location, month, day give a broader overview? It pools several surveys so comparison is harder 
-          group_by (Location, Surv) %>%
-        summarise (totabundSur = round(sum(Abundance),2), totbiomSur = round(sum(BioMass, na.rm=TRUE),2), sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2), sizeMax = round(max(SizeClass),2), species = n_distinct(TAXONOMIC_NAME), latt = mean(SiteLat)) %>%
-          group_by(Location) %>%
-            summarise(meanTotAbun = round(mean(totabundSur), 2), sdTotAbun = sd(totabundSur), cases = n(), meanTotBiom = round(mean(totbiomSur), 2), sdTotBiom = sd(totbiomSur), meanSize = round(mean(sizeMean), 2), sdMeanSize = sd(sizeMean), sizeMaxAll = round(max(sizeMax),2), sdMaxSize = sd(sizeMax), meanSpecies = round(mean(species),2), sdmeanSpp = sd(species), lattLoc = mean(latt)) %>%
-                mutate(seTotAbun = sdTotAbun/sqrt(cases), seTotBiom = sdTotBiom/sqrt(cases), seMeanSize = sdMeanSize/sqrt(cases), seMaxSize = sdMaxSize/sqrt(cases), semeanSpecies = sdmeanSpp/sqrt(cases)) %>%
-        #  filter (years > 4) %>%
-              arrange(desc(lattLoc))
-
-## We still need to sort out which of the three options above is correct 
-
 
 ggplot(MeanVertLocation, aes (x = reorder(Location, -lattLoc), y = meanSpecies)) +
     geom_bar(stat =  "identity", fill= "grey") + 
