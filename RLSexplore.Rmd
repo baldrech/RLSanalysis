@@ -124,12 +124,12 @@ rm(list = ls()) # clear memory
 
 library(tidyverse)
 library(ggmap)
-#library(ggplot2)
-#library(cowplot)
-#library(vegan)
 
 load(file="C:/Users/astaa/Dropbox/asta/RLS/rlsbas.RData")
 #load(file="C:/Users/aud007/Dropbox/asta/RLS/rlsbas.RData")
+
+Surv <- substr(rls_bas$SurveyID,1,10)
+rls_bas <- cbind(rls_bas, Surv)
 
 count(rls_bas, rls_bas$`Site name`)
 nsites <- unique(rls_bas$`Site name`) 
@@ -177,6 +177,8 @@ scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
 
 knitr::kable(locVertLong)
 
+## TODO - here it would be good to group sites by geography and protection status. For a start we can use Internal/external of location name which indicates whether they are inside or outside the mpa. I do have some data from Rick and German on protection status, but it needs work to match site codes
+
 ## RQ2 - what is the best field to use for species consistency? RecordedSpecies? 
 ## use taxonomic_name & filter by method 1
 ## RLS - species, frequency_explorer (draw a polygon and click on images)
@@ -189,12 +191,12 @@ mainVertOccur <- rls_bas  %>%
   filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
       group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
       summarise (years = n_distinct(year), years2000 = n_distinct(ye2000), years2010 = n_distinct(ye2010), dep_min = min(Depth), dep_max = max(Depth), sizeMax = max(SizeClass), latt = round(mean(SiteLat),3), lattMin = round(min(SiteLat),3), lattMax = round(max(SiteLat),3), lattRange = round((max(SiteLat) - min(SiteLat)),3), long = round(mean(SiteLong),3)) %>%
-        filter(years > 3) %>% #if years > 4 we have 122 species
+        filter(years > 4) %>% #if years > 4 we have 120 species, if > 3 years I have 134
         arrange(desc(years))
 
 MainVertListOc <- mainVertOccur[[1]] ## list of vertebrate species filtered by occurrence in years
 
-#Second calculate mean abundance and biomass of these species per survey and filter out rare species 
+#Second calculate mean abundance and biomass of these MORE COMMON species per survey and filter out rare species 
 VertPerSurvey <- rls_bas  %>% 
   filter (TAXONOMIC_NAME %in% MainVertListOc) %>% 
       group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER, SurveyID) %>% ## group by day, month, year and location - survery
@@ -203,24 +205,29 @@ VertPerSurvey <- rls_bas  %>%
             summarise(meanAbun = round(mean(abundSur),3), meanBiom = round(mean(biomSur),3), meanSize = round(mean(sizeMean),3), maxSize = round(mean(sizeMax),3)) %>%
               filter (meanAbun > 2 | meanBiom > 1000)
 
-MainVertList <- VertPerSurvey[[1]] ## final list of common vertebrates with 3 filters applied = 86 vertebrates
+MainVertList <- VertPerSurvey[[1]] ## final list of common vertebrates with 3 filters applied = 78 vertebrates
 
-#RQ3 = what are reasoable criteria? Is surveyID the right field to summarise survey data
+##TODO - we need to do the same for benthic invertebrates (cephalopods are already included in the above). What are good criteria to filter common species? We could use same > 4 years of occurrence and mean Abundance per survery of, say, more than. Ideally we want to group inverts into say 3 size categories (small, medium, large) and apply different abundance filters for each of those 
+## At least we should include lobsters (ORDER == "Decapoda", not many of them), abalone (GENUS == "Haliotis", 2 species), periwinkles (GENUS == "Turbo", Turbo undulatus), seastars (Class == "Asteroidea"), and urchins as one grazer group (CLASS == "Echinoidea" & "Echiuroidea") 
+# Also Maoricolpus roseus is a common gastropod and an invader from NZ. Dicathais orbita (sea kangaroo?) is a common gastropod, could be pooled with two other presumably herbivorous gastropods? Alternatively we just pool all gastopods except for Haliotis
+# We might also want to have category of sedentary filter feeders, e.g. Crinoidea (Comanthus)?
 
 #then get all sorts of details for these species 
 mainVertDetails <- rls_bas  %>% 
   filter (TAXONOMIC_NAME %in% MainVertList) %>% 
       group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
-      summarise (years = n_distinct(year), years2000 = n_distinct(ye2000), years2010 = n_distinct(ye2010), dep_min = min(Depth), dep_max = max(Depth), latt = round(mean(SiteLat),3), lattMin = round(min(SiteLat),3), lattMax = round(max(SiteLat),3), lattRange = round((max(SiteLat) - min(SiteLat)),3), long = round(mean(SiteLong),3)) 
+      summarise (years = n_distinct(year), years2000 = n_distinct(ye2000), years2010 = n_distinct(ye2010), dep_min = min(Depth), dep_max = max(Depth), latt = round(mean(SiteLat),3), lattMin = round(min(SiteLat),3), lattMax = round(max(SiteLat),3), lattRange = round((max(SiteLat) - min(SiteLat)),3), long = round(mean(SiteLong),3), longMin = round(min(SiteLong),3), longMax = round(max(SiteLong),3), longRange = round((max(SiteLong) - min(SiteLong)),3)) 
 
 VertDetails <- cbind(VertPerSurvey, mainVertDetails)
 VertDetails <- VertDetails[,-c(10:14)]
 
 knitr::kable(VertDetails)
 
+## This table gives us 78 vertebrates and cephalopods (only 1 cephalopod) which are more common. It should be combined with the invertebrate data as well
+
 ```
 
-Table above shows that Port Phillip (VIC) has a lot more species, and that thre are five main groups of locations with longer term sampling: Ninepin, Tinderbox, Maria, Bicheno, Port Phillip. There are 47 vertebrate species with records from >15 years, but different filters should be discussed and decided.
+Table above shows that Port Phillip (VIC) has a lot more species, and that thre are five main groups of locations with longer term sampling: Ninepin, Tinderbox, Maria, Bicheno, Port Phillip. There are 47 vertebrate species with records from >15 years
 
 
 #### Comparing mean biomass, abundance, size, sp richness among localities
@@ -228,13 +235,12 @@ Table above shows that Port Phillip (VIC) has a lot more species, and that thre 
 ```{r warning=FALSE, message=FALSE, warning=FALSE}
 
 ## Next look at mean number of vertebrates+cephalopods and invertebrates per survey 
+## IMPORTANT! - what is one survey? If we group by unique surveyID then there are two numbers for each RLS survey, identified with -1 and -2. I added an extra column named 'Surv' where -1 and -2 are pooled into one survey. I am still sorting with Rick which one is correct and what is the equivalent for MPA surveys
 
-## try only surveys that are starting with R and see whether RLS data has higher number of species per survey
-## include lobsters and abalone and seastars and periwincles (turboungulatus), centrostephanus and heliocedaris
-
-MeanVertLocation <- rls_bas  %>% 
+# summarise only RLS data and keep -1 and -2 separate
+MeanVertLocationR <- rls_bas  %>% 
   filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") |  CLASS == "Cephalopoda" ) %>% 
- # filter ( PHYLUM == "Chordata" | CLASS  == "Cephalopoda") %>% 
+  filter ( MorR == "R") %>% 
   #  filter (Location == "Port Phillip Heads") %>%
    #    group_by (Location, day, month, year) %>% ## group by day, month, year and location - survery
   #RQ4 - does location, month, day give a broader overview? It pools several surveys so comparison is harder 
@@ -245,6 +251,39 @@ MeanVertLocation <- rls_bas  %>%
                 mutate(seTotAbun = sdTotAbun/sqrt(cases), seTotBiom = sdTotBiom/sqrt(cases), seMeanSize = sdMeanSize/sqrt(cases), seMaxSize = sdMaxSize/sqrt(cases), semeanSpecies = sdmeanSpp/sqrt(cases)) %>%
         #  filter (years > 4) %>%
               arrange(desc(lattLoc))
+
+#summarise only MPA data
+MeanVertLocationM <- rls_bas  %>% 
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") |  CLASS == "Cephalopoda" ) %>% 
+  filter ( MorR == "M") %>% 
+  #  filter (Location == "Port Phillip Heads") %>%
+   #    group_by (Location, day, month, year) %>% ## group by day, month, year and location - survery
+  #RQ4 - does location, month, day give a broader overview? It pools several surveys so comparison is harder 
+          group_by (Location, SurveyID) %>%
+        summarise (totabundSur = round(sum(Abundance),2), totbiomSur = round(sum(BioMass, na.rm=TRUE),2), sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2), sizeMax = round(max(SizeClass),2), species = n_distinct(TAXONOMIC_NAME), latt = mean(SiteLat)) %>%
+          group_by(Location) %>%
+            summarise(meanTotAbun = round(mean(totabundSur), 2), sdTotAbun = sd(totabundSur), cases = n(), meanTotBiom = round(mean(totbiomSur), 2), sdTotBiom = sd(totbiomSur), meanSize = round(mean(sizeMean), 2), sdMeanSize = sd(sizeMean), sizeMaxAll = round(max(sizeMax),2), sdMaxSize = sd(sizeMax), meanSpecies = round(mean(species),2), sdmeanSpp = sd(species), lattLoc = mean(latt)) %>%
+                mutate(seTotAbun = sdTotAbun/sqrt(cases), seTotBiom = sdTotBiom/sqrt(cases), seMeanSize = sdMeanSize/sqrt(cases), seMaxSize = sdMaxSize/sqrt(cases), semeanSpecies = sdmeanSpp/sqrt(cases)) %>%
+        #  filter (years > 4) %>%
+              arrange(desc(lattLoc))
+
+#summarise only RLS data but pool -1 and -2 into one survey id
+MeanVertLocation2 <- rls_bas  %>% 
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") |  CLASS == "Cephalopoda" ) %>% 
+  filter ( MorR == "R") %>% 
+  #  filter (Location == "Port Phillip Heads") %>%
+   #    group_by (Location, day, month, year) %>% ## group by day, month, year and location - survery
+  #RQ4 - does location, month, day give a broader overview? It pools several surveys so comparison is harder 
+          group_by (Location, Surv) %>%
+        summarise (totabundSur = round(sum(Abundance),2), totbiomSur = round(sum(BioMass, na.rm=TRUE),2), sizeMean = round((sum(SizeClass*Abundance)/sum(Abundance)),2), sizeMax = round(max(SizeClass),2), species = n_distinct(TAXONOMIC_NAME), latt = mean(SiteLat)) %>%
+          group_by(Location) %>%
+            summarise(meanTotAbun = round(mean(totabundSur), 2), sdTotAbun = sd(totabundSur), cases = n(), meanTotBiom = round(mean(totbiomSur), 2), sdTotBiom = sd(totbiomSur), meanSize = round(mean(sizeMean), 2), sdMeanSize = sd(sizeMean), sizeMaxAll = round(max(sizeMax),2), sdMaxSize = sd(sizeMax), meanSpecies = round(mean(species),2), sdmeanSpp = sd(species), lattLoc = mean(latt)) %>%
+                mutate(seTotAbun = sdTotAbun/sqrt(cases), seTotBiom = sdTotBiom/sqrt(cases), seMeanSize = sdMeanSize/sqrt(cases), seMaxSize = sdMaxSize/sqrt(cases), semeanSpecies = sdmeanSpp/sqrt(cases)) %>%
+        #  filter (years > 4) %>%
+              arrange(desc(lattLoc))
+
+## We still need to sort out which of the three options above is correct 
+
 
 ggplot(MeanVertLocation, aes (x = reorder(Location, -lattLoc), y = meanSpecies)) +
     geom_bar(stat =  "identity", fill= "grey") + 
