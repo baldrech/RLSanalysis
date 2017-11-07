@@ -1,6 +1,6 @@
 ---
 title: "Exploring RLS data"
-author: "Asta Audzijonyte & Freddie?"
+author: "Asta Audzijonyte & Freddie Heather"
 date: "31 October 2017"
 output: 
   html_document:
@@ -17,7 +17,7 @@ output:
 
 1) Develop a protocol that to identify species and locations to be included in regional models size spectrum models. We want to have a somewhat automated procedure to identify key groups important for models. For that we need to assess the spatial scale over which locations can be pooled and one model applied. Next, we need to assess which species should be included, based on the frequency of occurrence, abundance or other factors defining ecological importance (invasive species). Initially we plan to have a model at the level of ecoregion and start with the Bassian ecoregion. However, if locations in one ecoregions are too different based on their species composition we need to split them into several models. 
 
-2) Develop a protocol to extract all available information about species from publicly available databases (fishbased, Thorson et al. 2017 life-history parameter paper, Rick's thermal optima and any other data) and group this information to provide key parameters required for size spectrum models. 
+2) Develop a protocol to extract all available information about species from publicly available databases (fishbase, Thorson et al. 2017 life-history parameter paper, Rick's thermal optima and any other data) and group this information to provide key parameters required for size spectrum models. 
 
 *While exploring RLS data we also want to answer the following questions* 
 
@@ -55,7 +55,13 @@ d) protection status.  German and Rick has data on protection status of differen
 #this chunk includes initial data manipulations and does not need to be run every time 
 rm(list = ls()) # clear memory
 
-library(tidyverse)
+# install required packages (if not already installed)
+list.of.packages <- c("tidyverse", "ggmap", "nlme", "vegan", "rfishbase")
+new.packages     <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+# loading required packages
+lapply(list.of.packages, require, character.only = TRUE)
 
 # First read all the data in 
 rls_all <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/RLSmpa.csv")
