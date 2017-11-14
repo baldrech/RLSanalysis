@@ -15,7 +15,7 @@ output:
 
 *This project has two main goals: *
 
-1) Develop a protocol that to identify species and locations to be included in regional models size spectrum models. We want to have a somewhat automated procedure to identify key groups important for models. For that we need to assess the spatial scale over which locations can be pooled and one model applied. Next, we need to assess which species should be included, based on the frequency of occurrence, abundance or other factors defining ecological importance (invasive species). Initially we plan to have a model at the level of ecoregion and start with the Bassian ecoregion. However, if locations in one ecoregions are too different based on their species composition we need to split them into several models. 
+1) Develop a protocol to identify species and locations to be included in regional models size spectrum models. We want to have a somewhat automated procedure to identify key groups important for models. For that we need to assess the spatial scale over which locations can be pooled and one model applied. Next, we need to assess which species should be included, based on the frequency of occurrence, abundance or other factors defining ecological importance (invasive species). Initially we plan to have a model at the level of ecoregion and start with the Bassian ecoregion. However, if locations in one ecoregions are too different based on their species composition we need to split them into several models. 
 
 2) Develop a protocol to extract all available information about species from publicly available databases (fishbase, Thorson et al. 2017 life-history parameter paper, Rick's thermal optima and any other data) and group this information to provide key parameters required for size spectrum models. 
 
@@ -134,14 +134,71 @@ library(ggmap)
 load(file="C:/Users/astaa/Dropbox/asta/RLS/rlsbas.RData")
 #load(file="C:/Users/aud007/Dropbox/asta/RLS/rlsbas.RData")
 
+#Use only the first 10 characters of the survey ID, to pool records of -1 and -2 for method 2 (only useful for cryptic fish and inverts)
 Surv <- substr(rls_bas$SurveyID,1,10)
-rls_bas <- cbind(rls_bas, Surv)
+rls_bas <- cbind(rls_bas, Surv) 
 
 count(rls_bas, rls_bas$`Site name`)
 nsites <- unique(rls_bas$`Site name`) 
 length(nsites) 
 
-# there are 470 sites. Too many! We probably do not need them, just focus on Locations
+#Get other information about the sites, like protection status, exposure, environmental covariates
+rls_exp <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/RLSexposures.csv")
+rls_cov <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/RLSsitecovar.csv")
+mpa1 <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/TASprotect1.csv")
+mpa2 <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/TASprotect2.csv")
+algae <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/TASalgae.csv")
+GerSites<- read_csv("C:/Users/astaa/Dropbox/asta/RLS/SitesGerman.csv")
+
+
+sites_bas <- rls_bas %>% 
+           group_by(SiteCode) %>% 
+           summarise (name = first(`Site name`), location = first(Location), latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year), dep_min = min(Depth), dep_max = max(Depth), visib = round(mean(Visibility, na.rm = TRUE),3)) %>%
+      arrange(desc(latt)) %>%
+        rename("Name" = name, "Location" = location, "Mean lattitude" = latt, "Mean longitude" = long, "No vertebrate sp" = nsp, "No years sampled" = year, "Min depth" = dep_min, "Max_depth" = dep_max, "Mean visibility" = visib)
+
+# there are 531 sites. Too many! We probably do not need them, just focus on Locations
+
+
+sites1 <- merge(x = sites_bas, y = rls_exp, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+sites2 <- merge(x = sites1, y = rls_cov, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+
+
+
+sites_mpa1 <- mpa1 %>%
+  group_by(SiteCode) %>%
+    summarise(name = first(SITE_DESCRIPTION), protection = first(RESERVE_STATUS_CODE), latt = mean(SiteLat), long = mean(SiteLong), nspM1 = n_distinct(SpeciesID), abundM1 = mean(TotalAbundance), dep_min = min(Depth), dep_max = max(Depth), visib = round(mean(Visibility, na.rm = TRUE),3)) 
+
+sites_mpa2 <- mpa2 %>%
+  group_by(SiteCode) %>%
+    summarise(name = first(SITE_DESCRIPTION), protection = first(RESERVE_STATUS_CODE), latt = mean(SiteLat), long = mean(SiteLong), nspM2 = n_distinct(SpeciesID), abundM2= mean(TotalAbundance), dep_min = min(Depth), dep_max = max(Depth), visib = round(mean(Visibility, na.rm = TRUE),3)) 
+
+sites_algae <- algae %>%
+  group_by(SiteCode) %>%
+    summarise(name = first(SITE_DESCRIPTION), protection = first(RESERVE_STATUS_CODE), latt = mean(LATITUDE), long = mean(LONGITUDE), abundA = mean(TOTAL_NUMBER)) 
+
+sites_ger <- GerSites %>%
+  filter(Ecoregion == "Bassian") %>%
+  group_by(SiteCode) %>%
+    summarise(protection = first(`Governance (no-take multizone, no-take separate, general use multizone, restricted take, open)`), latt = mean(SiteLat), long = mean(SiteLong), nutrients = mean(Nutrients), exposeure= mean(`Wave exposure`), temp_min = mean(BIO_SST_min), temp_max = mean(BIO_SST_Max), yearMPA = first(`year of declaration`)) 
+
+sites3 <- merge(x = sites2, y = sites_mpa1, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE)  
+sites4 <- merge(x = sites3, y = sites_mpa2, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+sites5 <- merge(x = sites4, y = sites_algae, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+sites6 <- merge(x = sites5, y = sites_ger, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE)
+
+#A final information about sites
+bas_sites <- sites6
+
+write.csv (sites6, file = "C:/Users/astaa/Dropbox/asta/RLS/siteData.csv", na = "NA")
+
+
+tasmania = get_map(location = c(lon = 145, lat = -40), zoom = 6, maptype = "satellite")
+
+ggmap(tasmania, extent = "panel", legend = "bottomright") +
+geom_point(aes(x = sites6$`Mean longitude`, y = sites6$`Mean lattitude`), data = sites3, size = 1, color = "orange") +
+scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))  
 
 #how many locations do we have? 
 
@@ -152,15 +209,18 @@ locobs = count (rls_bas, Location) %>% #gives a 36x2 table number of observation
 
 knitr::kable(locobs)
 
+## Rick suggests to ignore locations and instead focus on main geographic areas 
+# So we need to add an extra column and group all sites into VIC, NN, NE, SE, SS, WW, setting the limits as in Rick's 2010 GCB paper (doi: 10.1111/j.1365-2486.2009.01955.x)
+#
 #now let's use dplyr to explore the data 
 
 #look at the number of vertebrate locations 
 locVert <- rls_bas %>% 
     filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
            group_by(Location) %>% 
-           summarise (latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year), dep_min = min(Depth), dep_max = max(Depth)) %>%
+           summarise (latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year), dep_min = min(Depth), dep_max = max(Depth), visib = round(mean(Visibility, na.rm = TRUE),3)) %>%
       arrange(desc(latt)) %>%
-        rename("Mean lattitude" = latt, "Mean longitude" = long, "No vertebrate sp" = nsp, "No years sampled" = year, "Min depth" = dep_min, "Max_depth" = dep_max)
+        rename("Mean lattitude" = latt, "Mean longitude" = long, "No vertebrate sp" = nsp, "No years sampled" = year, "Min depth" = dep_min, "Max_depth" = dep_max, "Mean visibility" = visib)
 
 knitr::kable(locVert)
 
