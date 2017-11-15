@@ -200,7 +200,7 @@ basforMDS[,1] <- abs(basforMDS[,1])
 
 
 
-pcasites=prcomp(basforMDS,retx=TRUE,center=TRUE,scale.=TRUE, na.)
+pcasites=prcomp(basforMDS,retx=TRUE,center=TRUE,scale.=TRUE)
 
 
 library(nlme)
