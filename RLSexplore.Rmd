@@ -64,7 +64,7 @@ if(length(new.packages)) install.packages(new.packages)
 lapply(list.of.packages, require, character.only = TRUE)
 
 # First read all the data in 
-rls_all <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/RLSmpa.csv")
+rls_all <- read_csv("RLSmpa.csv")
 
 #This data set contains both old MPA records and new, more standardised, RLS records. They are identified with the first letter of the SurveyID field (M or R). We need to add an extra column for this, so we can filter out only one set of records for some analyses. 
 MorR <- substr(rls_all$SurveyID,1,1)
@@ -106,7 +106,7 @@ for (i in 1:length(ye2000)) {
 
 rls_all = cbind(rls_all, ye2000, ye2010)
 
-save(rls_all, file="C:/Users/astaa/Dropbox/asta/RLS/rlsall.RData") # save the file
+save(rls_all, file="rlsall.RData") # save the file
 
 ##
 
@@ -115,7 +115,7 @@ rls_bas <- rls_all %>%
   filter(Ecoregion == "Bassian")
 
 #save this data frame in a tibble format for easier display, subsampling only relevant columns
-save(rls_bas, file="C:/Users/astaa/Dropbox/asta/RLS/rlsbas.RData") # save the file, because it takes a long time to read it in 
+save(rls_bas, file="rlsbas.RData") # save the file, because it takes a long time to read it in 
 
 
 
@@ -131,7 +131,7 @@ rm(list = ls()) # clear memory
 library(tidyverse)
 library(ggmap)
 
-load(file="C:/Users/astaa/Dropbox/asta/RLS/rlsbas.RData")
+load(file="rlsbas.RData")
 #load(file="C:/Users/aud007/Dropbox/asta/RLS/rlsbas.RData")
 
 #Use only the first 10 characters of the survey ID, to pool records of -1 and -2 for method 2 (only useful for cryptic fish and inverts)
@@ -143,12 +143,12 @@ nsites <- unique(rls_bas$`Site name`)
 length(nsites) 
 
 #Get other information about the sites, like protection status, exposure, environmental covariates
-rls_exp <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/RLSexposures.csv")
-rls_cov <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/RLSsitecovar.csv")
-mpa1 <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/TASprotect1.csv")
-mpa2 <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/TASprotect2.csv")
-algae <- read_csv("C:/Users/astaa/Dropbox/asta/RLS/TASalgae.csv")
-GerSites<- read_csv("C:/Users/astaa/Dropbox/asta/RLS/SitesGerman.csv")
+rls_exp <- read_csv("RLSexposures.csv")
+rls_cov <- read_csv("RLSsitecovar.csv")
+mpa1 <- read_csv("TASprotect1.csv")
+mpa2 <- read_csv("TASprotect2.csv")
+algae <- read_csv("TASalgae.csv")
+GerSites<- read_csv("SitesGerman.csv")
 
 
 sites_bas <- rls_bas %>% 
@@ -190,7 +190,7 @@ sites6 <- merge(x = sites5, y = sites_ger, by.x = "SiteCode", by.y = "SiteCode",
 #A final information about sites
 
 
-write.csv (sites6, file = "C:/Users/astaa/Dropbox/asta/RLS/siteData.csv", na = "NA")
+write.csv (sites6, file = "siteData.csv", na = "NA")
 
 bas_sitesMDS <- GerSites<- read_csv("C:/Users/astaa/Dropbox/asta/RLS/siteDataMDS.csv")
 
@@ -715,7 +715,7 @@ abline(v=0, col = 'red')
 ## MPAS are identified with 1 for Governance or NT and NTZ (no take or no take zone)
 ## German can send MPA categories 
 
-load(file="C:/Users/astaa/Dropbox/asta/RLS/rlsall.RData")
+load(file="rlsall.RData")
 
 VertTrendsAllSize <- rls_all  %>%  ## entire data set
   filter (TAXONOMIC_NAME %in% VertSpecies5y) %>% #chose only cases for selected species
@@ -807,7 +807,7 @@ abline(v=0, col = 'red')
 
 library(vegan)
 
-load(file="C:/Users/astaa/Dropbox/asta/RLS/rlsbas.RData")
+load(file="rlsbas.RData")
 
 #first creat a couple of extra columns to help sort out only the main 5 areas 
 loc <- substr(rls_bas$Location, 1,4) #sample the first 4 of location name
@@ -1093,10 +1093,10 @@ VertData <- m6 %>%
   arrange(m6, desc(abunMean)) %>%
     mutate (abunMeanMax = abunMean/abunMax, sizeMeanMax = sizeMean/sizeMax)
 
-save(VertData, file="C:/Users/astaa/Dropbox/asta/RLS/VertData.RData") # save the file, because it takes a long time to read it in 
-load("C:/Users/astaa/Dropbox/asta/RLS/VertData.RData")
+save(VertData, file="VertData.RData") # save the file, because it takes a long time to read it in 
+load("VertData.RData")
 
-write.csv (VertData, file = "C:/Users/astaa/Dropbox/asta/RLS/VertData.csv", na = "NA")
+write.csv (VertData, file = "VertData.csv", na = "NA")
 
 ```
 
@@ -1136,7 +1136,7 @@ which((CommonInvaders2010 %in% CommonInvaders) ==TRUE) ## 12 of the invader spec
 ```{r warning=FALSE, message=FALSE, warning=FALSE}
 
 #load the large VertData table for printing (105x71)
-load(file="C:/Users/astaa/Dropbox/asta/RLS/VertData.RData")
+load(file="VertData.RData")
 
 #now I want to identify the most abundant invertebrate species to see if we at least should include key invertebrates 
 
