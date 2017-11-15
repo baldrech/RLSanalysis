@@ -188,9 +188,41 @@ sites5 <- merge(x = sites4, y = sites_algae, by.x = "SiteCode", by.y = "SiteCode
 sites6 <- merge(x = sites5, y = sites_ger, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE)
 
 #A final information about sites
-bas_sites <- sites6
+
 
 write.csv (sites6, file = "C:/Users/astaa/Dropbox/asta/RLS/siteData.csv", na = "NA")
+
+bas_sitesMDS <- GerSites<- read_csv("C:/Users/astaa/Dropbox/asta/RLS/siteDataMDS.csv")
+
+basforMDS <- bas_sitesMDS %>% select(`Mean lattitude`, `Mean longitude`, `Mean visibility`, `Wave exposure`, `Min depth`, `No vertebrate sp`, chlomean, sstmean, sstrange, nutrients) 
+
+basforMDS[,1] <- abs(basforMDS[,1])
+
+
+
+pcasites=prcomp(basforMDS,retx=TRUE,center=TRUE,scale.=TRUE, na.)
+
+
+library(nlme)
+library(vegan)
+
+siteDistance = vegdist(basforMDS, method = "euclidean", na.rm = FALSE)
+s = metaMDS(basforMDS, method = "euclidean",  k=2) #no convergence 
+#mdstest = metaMDS(dataMDSmt, distance="bray",k=3,trymax=200)
+#bas_dist = vegdist(dataMDS)
+
+
+
+stressplot(mdstest)
+plot(mdstest)
+
+par(mfrow=c(1,1))
+
+siteRegr <- lm(abundMean ~ year, data = VertTrends[tempvect,]) #simple linear regression 
+
+regMod3=lm(EvDataMo$LRate~F+studyF1,data=EvDataMo)
+anova(regMod2,regMod3) #they can be combined p=0.46, F=0.55, df=1
+
 
 
 tasmania = get_map(location = c(lon = 145, lat = -40), zoom = 6, maptype = "satellite")
