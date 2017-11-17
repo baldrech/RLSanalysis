@@ -1,0 +1,189 @@
+---
+title: "Grouping of RLS sites"
+author: "Asta and Freddie"
+date: "17 November 2017"
+output: 
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc:yes
+---
+
+
+
+```{r warning=FALSE, message=FALSE, warning=FALSE}
+
+rm(list=ls())
+list.files()
+
+list.of.packages <- c("tidyverse", "dplyr", "ggplot2", "ggmap")
+new.packages     <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+lapply(list.of.packages, require, character.only = TRUE)
+
+
+#load RLS_MPA bassian ecoregion data 
+load(file="rlsbas.RData")
+
+nsites <- length(unique(rls_bas$SiteCode))  #531 site codes in the data
+
+## sumarrise bassian sites
+sites_bas <- rls_bas %>% 
+           group_by(SiteCode) %>% 
+           summarise (name = first(`Site name`), location = first(Location), latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year), depth = mean(Depth), visibility = round(mean(Visibility, na.rm = TRUE),3)) 
+# there are 531 sites. 
+
+# Plot the sites
+tasmania = get_map(location = c(lon = 145, lat = -40), zoom = 6, maptype = "satellite")
+
+ggmap(tasmania, extent = "panel", legend = "bottomright") +
+geom_point(aes(x = sites_bas$long, y = sites_bas$latt), data = sites_bas, size = 1, color = "orange") +
+scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
+```
+
+The following chunk can be ignored for now. It is used to load all the data from .csv files and compile it into one data file saved as SiteData_bas.RData. It has a message eval=FALSE which means that it will not run upon execution
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval=FALSE} 
+
+#this chunk only needs to be run once or not at all if the output of site infomation is loaded from RData
+#but I keep it here for the future, in case we get new .csv files from Rick and new inforamtion 
+
+#Get other information about the sites, like protection status, exposure, environmental covariates
+rls_exp <- read_csv("RLSexposures.csv")
+rls_exp <- rls_exp %>% select(SiteCode, `Wave exposure`)
+rls_cov <- read_csv("RLSsitecovar.csv") # files with various covariates
+rls_cov <- rls_cov[,c(1:2,15:31)]
+rls_prot <- read_csv("Neoli.csv")  #file with protection status 
+rls_prot <- rls_prot %>% select(SiteCode, Governance)
+
+#in neoli.csv data empty values for governance means that the site is not protected. So we replace them with 0
+rls_prot$Governance[is.na(rls_prot$Governance)] <- 0
+
+## These are datafiles from German for the MPA sites
+mpa1 <- read_csv("TASprotect1.csv")  #MPA sites and their protection status
+mpa2 <- read_csv("TASprotect2.csv")
+
+sites_mpa1 <- mpa1 %>%
+  group_by(SiteCode) %>%
+    summarise(protection = first(RESERVE_STATUS_CODE)) 
+
+a = sapply(sites_mpa1$protection,switch,'NTZ'=1,'EXT'=0, 'RTZ' = 0.5)
+rls_mpa1 <- cbind(sites_mpa1[,1],a)
+
+sites_mpa2 <- mpa2 %>%
+  group_by(SiteCode) %>%
+    summarise(protection = first(RESERVE_STATUS_CODE)) 
+
+b = sapply(sites_mpa2$protection,switch,'NTZ'=1,'EXT'=0, 'RTZ' = 0.5)
+rls_mpa2 <- cbind(sites_mpa2[,1],b)
+
+algae <- read_csv("TASalgae.csv")  #more MPA sites and protection status as well as algal abundance
+sites_algae <- algae %>%
+  group_by(SiteCode) %>%
+    summarise(protection = first(RESERVE_STATUS_CODE), abundA = mean(TOTAL_NUMBER)) 
+
+c = sapply(sites_algae$protection,switch,'NTZ'=1,'EXT'=0, 'RTZ' = 0.5)
+rls_algae = cbind(sites_algae[,c(1,3)],c)
+
+##Now I need to merge all the matrices 
+
+sites1 <- merge(x = sites_bas, y = rls_exp, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+sites2 <- merge(x = sites1, y = rls_cov, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+sites3 <- merge(x = sites2, y = rls_prot, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+sites4 <- merge(x = sites3, y = rls_mpa1, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+sites5 <- merge(x = sites4, y = rls_mpa2, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+sites6 <- merge(x = sites5, y = rls_algae, by.x = "SiteCode", by.y = "SiteCode", all.x = TRUE) 
+
+# further manipulation of data 
+
+# select the four columns that have the protection status for different sites from different files and merge them to remove NAs
+protection <- sites6 %>% select(Governance, a, b, c)
+mpa = t(apply(protection, 1, sort, na.last = T)) # now the first column has the protection information 
+mpa = as.numeric(mpa[,1]) # pick the first column now, if it has NA then the site does not have protection information. Note, 1 means no take, 0.5 means restricted take, and 0 means open to fishing 
+
+sites6$latt <- abs(sites6$latt) #convert lattitude to positive values for PCA analyses
+
+siteData <- cbind(sites6, mpa)
+siteData <- siteData[!duplicated(siteData), ] #remove duplicates
+
+save(siteData, file = "SiteData_bas.RData") # to avoid reading all the matrices again 
+```
+
+
+
+```{r warning=FALSE, message=FALSE, warning=FALSE} 
+
+load (file = "SiteData_bas.RData")
+
+# Select which variables should be included in the final analsyes. I don't include visibility because it is missing in many sites 
+
+siteData1 <- siteData %>% select(SiteCode, latt, long, nsp, depth, damax, chlomean, chlomax, phos, silicate, sstmean, sstrange, sstmax, sstmin, chlomin, parmean, salinity, dissox, cloudmean, nitrate, calcite, ph, abundA, `Wave exposure`)
+
+## The data set above can include any range of selected variables. NOTE, the protection status or variable 'mpa' probably should not be included in clustering. We should cluster sites by different variables. Then the models will be run with and without fishing and emergent data compared to sites with and without protection 
+
+plot(siteData1)
+#It is interesting how latitude correlates with phos and silicate so strongly! Looks a big weird. Latitude correlates with sstmean and sstmax but not sstrange. damax (turbidity) correlates strongly with chlomean and chlomax. So it looks that we could reduce the strongly correlated variables 
+
+
+#in the new selection I exclude strongly correlated variables and also abundA (algal abudnance) and wave exposure due to missing data
+siteData1 <- siteData %>% select(SiteCode, latt, long, nsp, depth, chlomean, phos, sstmean, sstrange, sstmax, sstmin, parmean, salinity, dissox, cloudmean, calcite, ph)
+
+plot(siteData1)
+
+
+## Freddie, this is a super clumsy code and I am sure this could be done better - I need to turn it into a numeric matrix wtih site names as row names and variables as columns. This is because clustering analyses do not run on lists but need numeric values 
+
+siteForPCA <- matrix(unlist(siteData1),ncol=length(siteData1[,]),byrow=FALSE) #turn the list into matrix
+siteForPCAt <- siteForPCA[,-1] #remove the first column which is the site code
+storage.mode(siteForPCAt) <- "numeric"
+siteForPCAt[is.nan(siteForPCAt)] <- NA  # some NaN still found in the data and will mess up the analyses. Replace them with NA
+rownames(siteForPCAt) <- siteData1[,1] #site code as row names
+colnames(siteForPCAt) <- colnames(siteData1[,-1]) #variables as column names
+
+# This is now the main data for PCA analysis of sites based on environmental conditions
+envirPCA <- siteForPCAt
+
+##Principal component analysis. 
+# At this stage we simply remove observations with missing data. There are some methods that can to interpolate missing data and it might be better to use that in the future 
+
+matrixForPCA = na.omit(envirPCA) # seelect variables to be included in analyses - don't include visibility, abundA (algal abundance) and wave exposure as there are too many NAs in those
+
+
+sitePCA = prcomp(na.omit(matrixForPCA[,-c(1:2)]), center = TRUE, scale. = TRUE, retx = TRUE) #conduct PCA but don't use lat and long as variables. I use scaled nad rotated axis, but it does not make any difference 
+summary(sitePCA)
+plot(sitePCA)
+biplot(sitePCA, cex = 0.5, expand = 1)
+
+sitePCA$rotation[,c(1:2)] #check correlation of variables with the first two axis. Strong correlation show they are most important determinants of grouping
+
+pscores = sitePCA$x[,c(1,2)]
+
+
+```
+
+The results above show that when 14 variables are included, the first two PC components explain 73% of variation, which is good. The PCA shows that the first axis is mostly determined by the contrast between temperature(sstmean, sstmax), salinity, ph against nitrate, phos, silicate and dissox. The three groups visible on PC1 are further separated on PC2, which is loaded by damax (turbidity),  cholorpyl and sstrage agaist sstmin and depth
+
+```{r warning=FALSE, message=FALSE, warning=FALSE} 
+
+#Next I want to assing group membership to sites based on their PC score. At this point I just want to separate sites on the left (PC1 < 0), versus those that have PC1 > 0.05, so I can plot them on a map with different colours. 
+
+siteData2 = merge(x = siteData1, y = pscores, by.x = "SiteCode", by.y = "row.names", all.x = TRUE) 
+
+
+sitesWithGroups <- siteData2 %>% mutate(g = case_when(siteData2$PC1 < 0 ~ 2, siteData2$PC2 > 0.5 ~  5)) # this could be done better, because I think case_when only works with two conditions?? 
+sitesWithGroups$g[is.na(sitesWithGroups$g)] <- 7 # assign other sites a code of 7. NOTE, these codes are just arbitrary to produce better colours in the plot below, this should be improved. 
+
+## And plot them now - looks pretty cool! Three clear groups based on environmental variables only 
+# We just need to change colours so they are better 
+tasmania = get_map(location = c(lon = 145, lat = -40), zoom = 6, maptype = "satellite")
+
+ggmap(tasmania, extent = "panel", legend = "bottomright") +
+geom_point(aes(x = sitesWithGroups$long, y = -(sitesWithGroups$latt)), data = sitesWithGroups, size = 0.7, color = sitesWithGroups$g) +
+scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
+
+```
+
