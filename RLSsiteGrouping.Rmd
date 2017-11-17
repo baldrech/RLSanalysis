@@ -156,6 +156,7 @@ sitePCA = prcomp(na.omit(matrixForPCA[,-c(1:2)]), center = TRUE, scale. = TRUE, 
 summary(sitePCA)
 plot(sitePCA)
 biplot(sitePCA, cex = 0.5, expand = 1)
+plot(sitePCA$x[,1], sitePCA$x[,2])
 
 sitePCA$rotation[,c(1:2)] #check correlation of variables with the first two axis. Strong correlation show they are most important determinants of grouping
 
@@ -174,7 +175,10 @@ siteData2 = merge(x = siteData1, y = pscores, by.x = "SiteCode", by.y = "row.nam
 
 
 sitesWithGroups <- siteData2 %>% mutate(g = case_when(siteData2$PC1 < 0 ~ 2, siteData2$PC2 > 0.5 ~  5)) # this could be done better, because I think case_when only works with two conditions?? 
-sitesWithGroups$g[is.na(sitesWithGroups$g)] <- 7 # assign other sites a code of 7. NOTE, these codes are just arbitrary to produce better colours in the plot below, this should be improved. 
+
+sitesWithGroups <- siteData2 %>% mutate(g = case_when((siteData2$PC1 < 0 & siteData2$PC2 < 0) ~ 1, siteData2$PC1 > 4 ~  2, (siteData2$PC1 < 0 & siteData2$PC2 >0) ~  3)) # this could be done better, because I think case_when only works with two conditions?? 
+
+sitesWithGroups$g[is.na(sitesWithGroups$g)] <- 4 # assign other sites a code of 7. NOTE, these codes are just arbitrary to produce better colours in the plot below, this should be improved. One problem with this approach is that it assigns code to both intermediate group in PCA and also to sites with NA values which were excluded from the analyses
 
 ## And plot them now - looks pretty cool! Three clear groups based on environmental variables only 
 # We just need to change colours so they are better 
@@ -186,4 +190,147 @@ scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
 scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
 
 ```
+
+Next we can look whether clustering gives us similar groupings 
+
+```{r warning=FALSE, message=FALSE, warning=FALSE} 
+clus <- kmeans(matrixForPCA[,-c(1:2)], 3, nstart = 20) # don't include lat long in clustering, only use environmental covariates
+
+siteclus <- clus$cluster
+
+## add cluster identity to the sizeWithGroups matrix (it is called y now but should be renamed)
+sitesWithGroups = merge(x = sitesWithGroups, y = siteclus, by.x = "SiteCode", by.y = "row.names", all.x = TRUE) 
+
+ggmap(tasmania, extent = "panel", legend = "bottomright") +
+geom_point(aes(x = sitesWithGroups$long, y = -(sitesWithGroups$latt)), data = sitesWithGroups, size = 0.7, color = sitesWithGroups$y) +
+scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
+```
+
+*Result* - The k means clustering into 3 groups gives a little bit similar grouping but not as clearcut. So PCA seems to be better. We need to change colours to make it better visible 
+
+The next thing I want to do is to look at the grouping based on biological data only 
+
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval = FALSE} 
+
+#First filter out species that have only been observed over a certain number of years, here I choose species seen for 5 or more years
+# I can either apply a filter by selecting key groups that I think are important, or use all groups
+
+mainSpeciesOccur <- rls_bas  %>% 
+  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
+     # filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda" | ORDER == "Decapoda" | GENUS == "Haliotis" | GENUS == "Turbo" | CLASS == "Asteroidea" | CLASS == "Echinoidea" | CLASS == "Echiuroidea" ) %>% 
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
+      summarise (years = n_distinct(year), years2000 = n_distinct(ye2000), years2010 = n_distinct(ye2010)) %>%
+        filter(years > 4) 
+
+MainSpeciesList <- mainSpeciesOccur[[1]] ## list of 163 species filtered by occurrence in years, or 220 species without any filters
+
+
+## Common benthic invertebrates - include lobsters (ORDER == "Decapoda", not many of them), abalone (GENUS == "Haliotis", 2 species), periwinkles (GENUS == "Turbo", Turbo undulatus), seastars (Class == "Asteroidea"), and urchins as one grazer group (CLASS == "Echinoidea" & "Echiuroidea"). Also Maoricolpus roseus is a common gastropod and an invader from NZ. Dicathais orbita (sea kangaroo?) is a common gastropod, could be pooled with two other presumably herbivorous gastropods? Alternatively we just pool all gastopods except for Haliotis
+
+
+#Second calculate mean abundance and biomass of these MORE COMMON species per survey and filter out rare species 
+SpPerSurvey <- rls_bas  %>% 
+  filter (TAXONOMIC_NAME %in% MainSpeciesList) %>% 
+      group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER, SurveyID) %>% ## group by day, month, year and location - survery
+        summarise (abundSur = round(sum(Abundance),2), biomSur = round(sum(BioMass, na.rm=TRUE),2)) %>%
+          group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
+            summarise(meanAbun = round(mean(abundSur),3), meanBiom = round(mean(biomSur),3)) %>%
+              filter (meanAbun > 6 | meanBiom > 1000)
+
+MainSpecies <- SpPerSurvey[[1]] ## if abund > 5 I get final list of common species with 3 filters applied = 68 species, or 78 species if using all taxa. If abund > 6 I get 68 for final list of taxa. 
+
+SpeciesforPCA <- rls_bas %>%
+  filter (TAXONOMIC_NAME %in% MainSpecies) %>%
+    filter(Method == 1) %>%
+#          filter (year > 1999, year <2010) %>%
+            group_by(SiteCode, SurveyID, TAXONOMIC_NAME) %>%
+                summarise (abund = round(sum(Abundance),3)) %>%
+                    group_by(SiteCode, TAXONOMIC_NAME) %>%
+                        summarise(abundMean = round(mean(abund), 3))
+
+## This gives the mean abundance of key species per site - a large matrix
+
+spPCAdata <- spread(SpeciesforPCA, key = SiteCode, value = abundMean, fill = 0)
+spPCAdata1 <- matrix(unlist(spPCAdata),ncol=length(spPCAdata[,]),byrow=FALSE) #turn the list into matrix
+spPCAdatat <- spPCAdata1[,-1]
+storage.mode(spPCAdatat) <- "numeric"
+rownames(spPCAdatat) <- spPCAdata1[,1]
+colnames(spPCAdatat) <- colnames(spPCAdata[,-1])
+speciesPCA  <-t(spPCAdatat)  ## This is the main biological data for sites
+
+## now we have speciesPCA and envirPCA data 
+
+#Merge all data 
+
+PCAdataMain <- merge(x = envirPCA, y = speciesPCA, by = "row.names", all.x = TRUE) 
+rownames(PCAdataMain) = PCAdataMain[,1] #move first column into the row names
+PCAdataMain = PCAdataMain[,-1]
+
+```
+
+The PCAdataMain is the main data file with environmental and species abundance data for 531 sites
+
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval = FALSE} 
+
+
+sitePCAsp = prcomp(na.omit(PCAdataMain[,-c(1:16)]), scale. = TRUE, retx = TRUE) #conduct PCA on species abundance data only. We need to scale the abundance matrix because it is not correlation matrix and otherwise some common species have a huge effect
+summary(sitePCAsp)
+plot(sitePCAsp)
+biplot(sitePCAsp, cex = 0.5, expand = 1)
+plot(sitePCAsp$x[,1], sitePCAsp$x[,2])
+
+# we can see that there are some outlier sites
+loadingsp <- sitePCAsp$rotation[,c(1,2)]
+
+spcores = sitePCAsp$x[,c(1,2)]
+siteData2 = merge(x = PCAdataMain, y = spcores, by = "row.names", all.x = TRUE) 
+rownames(siteData2) = siteData2[,1]
+siteData2 = siteData2[,-1]
+
+siteswithSpPC <- siteData2 %>% mutate(g = case_when(siteData2$PC1 < 0 ~ 2, siteData2$PC2 > 0.5 ~  5)) # this could be done better, because I think case_when only works with two conditions?? 
+sitesWithGroups$g[is.na(sitesWithGroups$g)] <- 7 # assign other sites a code of 7. NOTE, these codes are just arbitrary to produce better colours in the plot below, this should be improved. One problem with this approach is that it assigns code to both intermediate group in PCA and also to sites with NA values which were excluded from the analyses
+
+
+
+
+
+temp <- siteData2 %>% filter(siteData2$PC1 < 5 & siteData2$PC2 > -5)  #this removes about 4 deviant sites
+
+temp[, colSums(temp != 0) > 0]
+
+
+SelectVar[, colSums(SelectVar == 0) == 0]
+
+sitePCAsp2 = prcomp(na.omit(temp[,c(17:69)]), scale. = TRUE, retx = TRUE) 
+
+PCscores= sitePCAsp$x[,c(1:30)] # first 30 PCs include 70% of variation 
+
+
+mdstest = metaMDS(na.omit(PCAdataMain[,-c(1:16)]), k=2) #no convergence 
+#mdstest = metaMDS(dataMDSmt, distance="bray",k=3,trymax=200)
+#bas_dist = vegdist(dataMDS)
+
+stressplot(mdstest)
+plot(mdstest)
+
+par(mfrow=c(1,1))
+
+ordiplot(mdstest,type="n")
+orditorp(mdstest,display="sites",cex=1,air=0.1)
+orditorp(mdstest,display="species",col="red",air=0.01)
+
+
+
+which(sitePCAsp$x== min(sitePCAsp$x[,1]))
+
+sitePCA$rotation[,c(1:2)] #check correlation of variables with the first two axis. Strong correlation show they are most important determinants of grouping
+
+pscores = sitePCA$x[,c(1,2)]
+
+
+biolData = na.omit(PCAdataMain[,-c(3:25)])
+
 
