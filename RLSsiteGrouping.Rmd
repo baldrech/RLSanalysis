@@ -169,16 +169,13 @@ The results above show that when 14 variables are included, the first two PC com
 
 ```{r warning=FALSE, message=FALSE, warning=FALSE} 
 
-#Next I want to assing group membership to sites based on their PC score. At this point I just want to separate sites on the left (PC1 < 0), versus those that have PC1 > 0.05, so I can plot them on a map with different colours. 
+#Next I want to assing group membership to sites based on their PC score. The first 2 PC axes more or less define 4 groups 
 
 siteData2 = merge(x = siteData1, y = pscores, by.x = "SiteCode", by.y = "row.names", all.x = TRUE) 
 
+sitesWithGroups <- siteData2 %>% mutate(g = case_when((siteData2$PC1 < 0 & siteData2$PC2 < 0) ~ 1, siteData2$PC1 > 4 ~  2, ((siteData2$PC1 > 1 & siteData2$PC1 < 3) & siteData2$PC2 < 1) ~  3, (siteData2$PC1 < 0 & siteData2$PC2 >0) ~  4)) # this could be done better, because I think case_when only works with two conditions?? 
 
-sitesWithGroups <- siteData2 %>% mutate(g = case_when(siteData2$PC1 < 0 ~ 2, siteData2$PC2 > 0.5 ~  5)) # this could be done better, because I think case_when only works with two conditions?? 
-
-sitesWithGroups <- siteData2 %>% mutate(g = case_when((siteData2$PC1 < 0 & siteData2$PC2 < 0) ~ 1, siteData2$PC1 > 4 ~  2, (siteData2$PC1 < 0 & siteData2$PC2 >0) ~  3)) # this could be done better, because I think case_when only works with two conditions?? 
-
-sitesWithGroups$g[is.na(sitesWithGroups$g)] <- 4 # assign other sites a code of 7. NOTE, these codes are just arbitrary to produce better colours in the plot below, this should be improved. One problem with this approach is that it assigns code to both intermediate group in PCA and also to sites with NA values which were excluded from the analyses
+sitesWithGroups$g[is.na(sitesWithGroups$g)] <- 5 # assign other sites a code of 7. NOTE, these codes are just arbitrary to produce better colours in the plot below, this should be improved. One problem with this approach is that it assigns code to both intermediate group in PCA and also to sites with NA values which were excluded from the analyses
 
 ## And plot them now - looks pretty cool! Three clear groups based on environmental variables only 
 # We just need to change colours so they are better 
@@ -241,10 +238,13 @@ SpPerSurvey <- rls_bas  %>%
 
 MainSpecies <- SpPerSurvey[[1]] ## if abund > 5 I get final list of common species with 3 filters applied = 68 species, or 78 species if using all taxa. If abund > 6 I get 68 for final list of taxa. 
 
+# Create sitexspecies abundance matrix. First, summarise species records for the main sites. One can apply various filters to exclude locations that have large deviation on sites
 SpeciesforPCA <- rls_bas %>%
   filter (TAXONOMIC_NAME %in% MainSpecies) %>%
-    filter(Method == 1) %>%
-#          filter (year > 1999, year <2010) %>%
+    #filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads" & Location != "Rocky Cape" & Location != "Derwent" & Location != "Derwent Estuary" & Location != "Victoria (other)") %>%
+#  filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads" & Location != "Ninepin External") %>%
+  #    filter(Method == 1) %>%
+        #  filter (year > 2005) %>%
             group_by(SiteCode, SurveyID, TAXONOMIC_NAME) %>%
                 summarise (abund = round(sum(Abundance),3)) %>%
                     group_by(SiteCode, TAXONOMIC_NAME) %>%
@@ -268,30 +268,98 @@ PCAdataMain <- merge(x = envirPCA, y = speciesPCA, by = "row.names", all.x = TRU
 rownames(PCAdataMain) = PCAdataMain[,1] #move first column into the row names
 PCAdataMain = PCAdataMain[,-1]
 
-```
+#PCAdataMain is the main data list by siteCode with environmental variables and  abundances of 53 species. The PCAdataMain is the main data file with environmental and species abundance data for 531 sites 
 
-The PCAdataMain is the main data file with environmental and species abundance data for 531 sites
-
-
-```{r warning=FALSE, message=FALSE, warning=FALSE, eval = FALSE} 
-
-
+## Then we can do PCA on the sites 
 sitePCAsp = prcomp(na.omit(PCAdataMain[,-c(1:16)]), scale. = TRUE, retx = TRUE) #conduct PCA on species abundance data only. We need to scale the abundance matrix because it is not correlation matrix and otherwise some common species have a huge effect
 summary(sitePCAsp)
 plot(sitePCAsp)
 biplot(sitePCAsp, cex = 0.5, expand = 1)
 plot(sitePCAsp$x[,1], sitePCAsp$x[,2])
 
-# we can see that there are some outlier sites
-loadingsp <- sitePCAsp$rotation[,c(1,2)]
 
-spcores = sitePCAsp$x[,c(1,2)]
-siteData2 = merge(x = PCAdataMain, y = spcores, by = "row.names", all.x = TRUE) 
-rownames(siteData2) = siteData2[,1]
-siteData2 = siteData2[,-1]
+```
 
-siteswithSpPC <- siteData2 %>% mutate(g = case_when(siteData2$PC1 < 0 ~ 2, siteData2$PC2 > 0.5 ~  5)) # this could be done better, because I think case_when only works with two conditions?? 
-sitesWithGroups$g[is.na(sitesWithGroups$g)] <- 7 # assign other sites a code of 7. NOTE, these codes are just arbitrary to produce better colours in the plot below, this should be improved. One problem with this approach is that it assigns code to both intermediate group in PCA and also to sites with NA values which were excluded from the analyses
+
+
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval = FALSE} 
+
+# The PCA on sites does not look good as there is too much effect of some deviant sites and variation cannot be summarised in the first few axes. Let's try to do the PCA on Locations instaed
+
+#I exclude victorian locations and derwent river as they seem to be too different. Also the analysis can be done for two main study periods - before and after 2005
+LocForPCA <- rls_bas %>%
+  filter (TAXONOMIC_NAME %in% MainSpecies) %>%
+  filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads" & Location != "Rocky Cape" & Location != "Derwent" & Location != "Derwent Estuary" & Location != "Victoria (other)" & Location != "Tasmania (other)") %>%
+#  filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads" & Location != "Ninepin External") %>%
+  #    filter(Method == 1) %>%
+          filter (year > 2005) %>%
+            group_by(Location, SurveyID, TAXONOMIC_NAME) %>%
+                summarise (abund = round(sum(Abundance),3)) %>%
+                    group_by(Location, TAXONOMIC_NAME) %>%
+                        summarise(abundMean = round(mean(abund), 3))
+
+
+locPCAdata <- spread(LocForPCA, key = Location, value = abundMean, fill = 0)
+locPCAdata1 <- matrix(unlist(locPCAdata),ncol=length(locPCAdata[,]),byrow=FALSE) #turn the list into matrix
+locPCAdatat <- locPCAdata1[,-1]
+storage.mode(locPCAdatat) <- "numeric"
+rownames(locPCAdatat) <- locPCAdata1[,1]
+colnames(locPCAdatat) <- colnames(locPCAdata[,-1])
+locationPCA  <-t(locPCAdatat)  ## This is the main biological data for sites
+
+
+locatPCAsp = prcomp(locationPCA[], scale. = TRUE, retx = TRUE) #conduct PCA on species abundance data only. We need to scale the abundance matrix because it is not correlation matrix and otherwise some common species have a huge effect
+summary(locatPCAsp)
+plot(locatPCAsp)
+biplot(locatPCAsp, cex = c(0.6, 0.5), expand = 1.5, xlim = c(-0.8, 0.8), ylim = c(-0.8, 0.4))  # REMEMBER that the first 2 axes only explain 25% of total variation
+plot(locatPCAsp$x[,1], locatPCAsp$x[,3])
+
+locatPCAsp$rotation[,c(1,2)]
+
+## alternatively try MDS on the location abundance data 
+
+#
+#mdstest = metaMDS(locationPCA, k=2, trymax = 200)  #  this was first done with most data, but Flinders island affects the data too much
+
+mdstest = metaMDS(locationPCA [-8,], k=2, trymax = 200)  # exclude row 8 which is flinders island 
+
+ordiplot(mdstest,type="n")
+orditorp(mdstest,display="sites",cex=1,air=0.1)
+orditorp(mdstest,display="species",col="red",air=0.01)
+
+stressplot(mdstest)
+plot(mdstest)
+
+## Or alternatively try k-means clustering on locationxspecies data. This is not a very intersting result, because just a few locations are separated and most others are grouped into 1
+
+clus <- kmeans(locationPCA, 3, nstart = 20)
+locationClusters <- clus$cluster
+
+
+# Summarise location data
+locatSum <- rls_bas %>% 
+           group_by(Location) %>% 
+           summarise (latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year), dep_min = min(Depth), dep_max = max(Depth), visib = round(mean(Visibility, na.rm = TRUE),3))
+
+
+## add cluster identity to the location datda
+locationsWithGroups = merge(x = locatSum, y = locationClusters, by.x = "Location", by.y = "row.names", all.x = FALSE) 
+
+## so this clu
+
+ggmap(tasmania, extent = "panel", legend = "bottomright") +
+geom_point(aes(x = sitesWithGroups$long, y = -(sitesWithGroups$latt)), data = sitesWithGroups, size = 0.7, color = sitesWithGroups$y) +
+scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
+
+
+
+
+par(mfrow=c(1,1))
+
+
+
 
 
 
@@ -308,19 +376,6 @@ sitePCAsp2 = prcomp(na.omit(temp[,c(17:69)]), scale. = TRUE, retx = TRUE)
 
 PCscores= sitePCAsp$x[,c(1:30)] # first 30 PCs include 70% of variation 
 
-
-mdstest = metaMDS(na.omit(PCAdataMain[,-c(1:16)]), k=2) #no convergence 
-#mdstest = metaMDS(dataMDSmt, distance="bray",k=3,trymax=200)
-#bas_dist = vegdist(dataMDS)
-
-stressplot(mdstest)
-plot(mdstest)
-
-par(mfrow=c(1,1))
-
-ordiplot(mdstest,type="n")
-orditorp(mdstest,display="sites",cex=1,air=0.1)
-orditorp(mdstest,display="species",col="red",air=0.01)
 
 
 
