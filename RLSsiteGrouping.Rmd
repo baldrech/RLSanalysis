@@ -12,7 +12,6 @@ output:
 ---
 
 
-
 ```{r warning=FALSE, message=FALSE, warning=FALSE}
 
 rm(list=ls())
@@ -32,21 +31,60 @@ nsites <- length(unique(rls_bas$SiteCode))  #531 site codes in the data
 ## sumarrise bassian sites
 sites_bas <- rls_bas %>% 
            group_by(SiteCode) %>% 
-           summarise (name = first(`Site name`), location = first(Location), latt = mean(SiteLat), long = mean(SiteLong), nsp = n_distinct(SpeciesID), year = n_distinct(year), depth = mean(Depth), visibility = round(mean(Visibility, na.rm = TRUE),3)) 
+           summarise (name = first(`Site name`), location = first(Location), latt = round(mean(SiteLat),3), long = round(mean(SiteLong),3), nsp = n_distinct(SpeciesID), year = n_distinct(year), surveys = n_distinct(SurveyID), depth = mean(Depth), visibility = round(mean(Visibility, na.rm = TRUE),3)) 
 # there are 531 sites. 
 
 # Plot the sites
 tasmania = get_map(location = c(lon = 145, lat = -40), zoom = 6, maptype = "satellite")
 
+## TODO - add a title and axis names to this 
 ggmap(tasmania, extent = "panel", legend = "bottomright") +
-geom_point(aes(x = sites_bas$long, y = sites_bas$latt), data = sites_bas, size = 1, color = "orange") +
+geom_point(aes(x = sites_bas$long, y = sites_bas$latt), data = sites_bas, size = 1, color = as.numeric(factor(sites_bas$location))) +
 scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
 scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
+
+#Table of sites
+#knitr::kable(sites_bas)
+
 ```
 
-The following chunk can be ignored for now. It is used to load all the data from .csv files and compile it into one data file saved as SiteData_bas.RData. It has a message eval=FALSE which means that it will not run upon execution
+There are 531 sites. They are roughly grouped into locations as shown on the map, but Rick suggests that location name should not be used. So let's group them differently. First we define a grid of 10 intervals and group the sites into the grid. 
 
-```{r warning=FALSE, message=FALSE, warning=FALSE, eval=FALSE} 
+```{r warning=FALSE, message=FALSE, warning=FALSE} 
+
+## Group the sites into 
+
+n_groups <- 10
+int <- (max(sites_bas$latt) - min(sites_bas$latt)) / n_groups #latitude interval
+sites_bas$group <- ceiling((sites_bas$latt - (min(sites_bas$latt)-0.001)) / int )
+
+int2 <- (max(sites_bas$long) - min(sites_bas$long)) / n_groups #long based interval 
+sites_bas$group2 <- ceiling((sites_bas$long - (min(sites_bas$long)-0.001)) / int2 )
+
+sites_bas$group3 <- ((sites_bas$group - 1) * n_groups) + sites_bas$group2  # final grouping, the groups are not consequtive numbers 
+length(unique(sites_bas$group3)) # this gives 31 groups
+
+
+#and map these sites 
+hlines <- seq(min(sites_bas$latt),max(sites_bas$latt),by=int)
+vlines <- seq(min(sites_bas$long),max(sites_bas$long),by=int2)
+
+ggmap(tasmania, extent = "panel", legend = "bottomright") +
+geom_point(aes(x = sites_bas$long, y = sites_bas$latt), data = sites_bas, size = 1, color = sites_bas$group3) +
+scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0)) +
+  geom_vline(xintercept = vlines) +
+  geom_hline(yintercept = hlines)
+
+# Now put these groups into the main rls_bas dataset
+rls_bas$group <- sites_bas$group3[match(rls_bas$SiteCode, sites_bas$SiteCode)]
+
+
+```
+
+Next I get site covariate inforamtion. The following chunk is used to load all the data from .csv files and compile it into one data file saved as SiteData_bas.RData. It has a message eval=FALSE which means that it will not run upon knitting. 
+
+```{r warning=FALSE, message=FALSE, warning=FALSE, eval=FALSE, echo=FALSE} 
 
 #this chunk only needs to be run once or not at all if the output of site infomation is loaded from RData
 #but I keep it here for the future, in case we get new .csv files from Rick and new inforamtion 
@@ -112,7 +150,7 @@ siteData <- siteData[!duplicated(siteData), ] #remove duplicates
 save(siteData, file = "SiteData_bas.RData") # to avoid reading all the matrices again 
 ```
 
-
+#Now group sites based on environmental data 
 
 ```{r warning=FALSE, message=FALSE, warning=FALSE} 
 
@@ -124,15 +162,14 @@ siteData1 <- siteData %>% select(SiteCode, latt, long, nsp, depth, damax, chlome
 
 ## The data set above can include any range of selected variables. NOTE, the protection status or variable 'mpa' probably should not be included in clustering. We should cluster sites by different variables. Then the models will be run with and without fishing and emergent data compared to sites with and without protection 
 
-plot(siteData1)
+plot(siteData1[,-1])
 #It is interesting how latitude correlates with phos and silicate so strongly! Looks a big weird. Latitude correlates with sstmean and sstmax but not sstrange. damax (turbidity) correlates strongly with chlomean and chlomax. So it looks that we could reduce the strongly correlated variables 
 
 
 #in the new selection I exclude strongly correlated variables and also abundA (algal abudnance) and wave exposure due to missing data
 siteData1 <- siteData %>% select(SiteCode, latt, long, nsp, depth, chlomean, phos, sstmean, sstrange, sstmax, sstmin, parmean, salinity, dissox, cloudmean, calcite, ph)
 
-plot(siteData1)
-
+plot(siteData1[,-1])
 
 ## Freddie, this is a super clumsy code and I am sure this could be done better - I need to turn it into a numeric matrix wtih site names as row names and variables as columns. This is because clustering analyses do not run on lists but need numeric values 
 
@@ -149,10 +186,7 @@ envirPCA <- siteForPCAt
 ##Principal component analysis. 
 # At this stage we simply remove observations with missing data. There are some methods that can to interpolate missing data and it might be better to use that in the future 
 
-matrixForPCA = na.omit(envirPCA) # seelect variables to be included in analyses - don't include visibility, abundA (algal abundance) and wave exposure as there are too many NAs in those
-
-
-sitePCA = prcomp(na.omit(matrixForPCA[,-c(1:2)]), center = TRUE, scale. = TRUE, retx = TRUE) #conduct PCA but don't use lat and long as variables. I use scaled nad rotated axis, but it does not make any difference 
+sitePCA = prcomp(na.omit(envirPCA[,-c(1:2)]), center = TRUE, scale. = TRUE, retx = TRUE) #conduct PCA but don't use lat and long as variables. I use scaled nad rotated axis, but it does not make any difference 
 summary(sitePCA)
 plot(sitePCA)
 biplot(sitePCA, cex = 0.5, expand = 1)
@@ -162,20 +196,12 @@ sitePCA$rotation[,c(1:2)] #check correlation of variables with the first two axi
 
 pscores = sitePCA$x[,c(1,2)]
 
-
-```
-
-The results above show that when 14 variables are included, the first two PC components explain 73% of variation, which is good. The PCA shows that the first axis is mostly determined by the contrast between temperature(sstmean, sstmax), salinity, ph against nitrate, phos, silicate and dissox. The three groups visible on PC1 are further separated on PC2, which is loaded by damax (turbidity),  cholorpyl and sstrage agaist sstmin and depth
-
-```{r warning=FALSE, message=FALSE, warning=FALSE} 
-
-#Next I want to assing group membership to sites based on their PC score. The first 2 PC axes more or less define 4 groups 
-
 siteData2 = merge(x = siteData1, y = pscores, by.x = "SiteCode", by.y = "row.names", all.x = TRUE) 
 
-sitesWithGroups <- siteData2 %>% mutate(g = case_when((siteData2$PC1 < 0 & siteData2$PC2 < 0) ~ 1, siteData2$PC1 > 4 ~  2, ((siteData2$PC1 > 1 & siteData2$PC1 < 3) & siteData2$PC2 < 1) ~  3, (siteData2$PC1 < 0 & siteData2$PC2 >0) ~  4)) # this could be done better, because I think case_when only works with two conditions?? 
+# TODO - The following is not a very rigorous or automated way to define groups. This done by simple eyeballing of the PCA plot to identify four main groups on PC1 and PC2. This should be done better 
+sitesWithGroups <- siteData2 %>% mutate(g = case_when((siteData2$PC1 < 0 & siteData2$PC2 < 0) ~ 1, siteData2$PC1 > 4 ~  2, (siteData2$PC1 < -2 & siteData2$PC2 >0) ~  3))
 
-sitesWithGroups$g[is.na(sitesWithGroups$g)] <- 5 # assign other sites a code of 7. NOTE, these codes are just arbitrary to produce better colours in the plot below, this should be improved. One problem with this approach is that it assigns code to both intermediate group in PCA and also to sites with NA values which were excluded from the analyses
+sitesWithGroups$g[is.na(sitesWithGroups$g)] <- 4 # assign other sites a code of 4. 
 
 ## And plot them now - looks pretty cool! Three clear groups based on environmental variables only 
 # We just need to change colours so they are better 
@@ -186,7 +212,14 @@ geom_point(aes(x = sitesWithGroups$long, y = -(sitesWithGroups$latt)), data = si
 scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
 scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
 
+
+#Finally add the envirogroups to the main dataset
+rls_bas$envgroup <- sitesWithGroups$g[match(rls_bas$SiteCode, sitesWithGroups$SiteCode)]
+
+
 ```
+
+The results above show that when 14 variables are included, the first two PC components explain 73% of variation, which is good. The PCA shows that the first axis is mostly determined by the contrast between temperature(sstmean, sstmax), salinity, ph against nitrate, phos, silicate and dissox. The three groups visible on PC1 are further separated on PC2, which is loaded by damax (turbidity),  cholorpyl and sstrage agaist sstmin and depth. The four groups define S, Port Phillip Bay, Derwent and the rest. 
 
 Next we can look whether clustering gives us similar groupings 
 
@@ -204,7 +237,7 @@ scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
 scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
 ```
 
-*Result* - The k means clustering into 3 groups gives a little bit similar grouping but not as clearcut. So PCA seems to be better. We need to change colours to make it better visible 
+*Result* - The k means clustering into 3 groups is not that good. The groups are all intermixed. 
 
 The next thing I want to do is to look at the grouping based on biological data only 
 
@@ -215,14 +248,13 @@ The next thing I want to do is to look at the grouping based on biological data 
 # I can either apply a filter by selecting key groups that I think are important, or use all groups
 
 mainSpeciesOccur <- rls_bas  %>% 
-  filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
+ # filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% 
      # filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda" | ORDER == "Decapoda" | GENUS == "Haliotis" | GENUS == "Turbo" | CLASS == "Asteroidea" | CLASS == "Echinoidea" | CLASS == "Echiuroidea" ) %>% 
       group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
       summarise (years = n_distinct(year), years2000 = n_distinct(ye2000), years2010 = n_distinct(ye2010)) %>%
         filter(years > 4) 
 
 MainSpeciesList <- mainSpeciesOccur[[1]] ## list of 163 species filtered by occurrence in years, or 220 species without any filters
-
 
 ## Common benthic invertebrates - include lobsters (ORDER == "Decapoda", not many of them), abalone (GENUS == "Haliotis", 2 species), periwinkles (GENUS == "Turbo", Turbo undulatus), seastars (Class == "Asteroidea"), and urchins as one grazer group (CLASS == "Echinoidea" & "Echiuroidea"). Also Maoricolpus roseus is a common gastropod and an invader from NZ. Dicathais orbita (sea kangaroo?) is a common gastropod, could be pooled with two other presumably herbivorous gastropods? Alternatively we just pool all gastopods except for Haliotis
 
@@ -234,53 +266,64 @@ SpPerSurvey <- rls_bas  %>%
         summarise (abundSur = round(sum(Abundance),2), biomSur = round(sum(BioMass, na.rm=TRUE),2)) %>%
           group_by (TAXONOMIC_NAME, GENUS, CLASS, FAMILY, ORDER) %>%
             summarise(meanAbun = round(mean(abundSur),3), meanBiom = round(mean(biomSur),3)) %>%
-              filter (meanAbun > 6 | meanBiom > 1000)
+              filter (meanAbun > 4 | meanBiom > 1000)
 
 MainSpecies <- SpPerSurvey[[1]] ## if abund > 5 I get final list of common species with 3 filters applied = 68 species, or 78 species if using all taxa. If abund > 6 I get 68 for final list of taxa. 
+
+#Get summary about the groups 
+groups_bas <- rls_bas %>% 
+           group_by(group) %>% 
+           summarise (location = first(Location), latt = round(mean(SiteLat),3), long = round(mean(SiteLong),3), nsp = n_distinct(SpeciesID), year = n_distinct(year), surveys = n_distinct(SurveyID), locatnum = n_distinct(Location), depth = mean(Depth), visibility = round(mean(Visibility, na.rm = TRUE),3)) 
+
 
 # Create sitexspecies abundance matrix. First, summarise species records for the main sites. One can apply various filters to exclude locations that have large deviation on sites
 SpeciesforPCA <- rls_bas %>%
   filter (TAXONOMIC_NAME %in% MainSpecies) %>%
-    #filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads" & Location != "Rocky Cape" & Location != "Derwent" & Location != "Derwent Estuary" & Location != "Victoria (other)") %>%
-#  filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads" & Location != "Ninepin External") %>%
+#    filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads" & Location != "Rocky Cape" & Location != "Derwent" & Location != "Derwent Estuary" & Location != "Victoria (other)") %>%
+ # filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads") %>%
+  filter (SiteLat < -39) %>% # filter victorian sites 
   #    filter(Method == 1) %>%
-        #  filter (year > 2005) %>%
-            group_by(SiteCode, SurveyID, TAXONOMIC_NAME) %>%
+       #   filter (year < 2006) %>%
+            group_by(group, SurveyID, TAXONOMIC_NAME) %>%
                 summarise (abund = round(sum(Abundance),3)) %>%
-                    group_by(SiteCode, TAXONOMIC_NAME) %>%
+                    group_by(group, TAXONOMIC_NAME) %>%
                         summarise(abundMean = round(mean(abund), 3))
 
 ## This gives the mean abundance of key species per site - a large matrix
 
-spPCAdata <- spread(SpeciesforPCA, key = SiteCode, value = abundMean, fill = 0)
+#Freddie, here again is the same issue of converting a list into a matrix
+spPCAdata <- spread(SpeciesforPCA, key = group, value = abundMean, fill = 0)
 spPCAdata1 <- matrix(unlist(spPCAdata),ncol=length(spPCAdata[,]),byrow=FALSE) #turn the list into matrix
 spPCAdatat <- spPCAdata1[,-1]
 storage.mode(spPCAdatat) <- "numeric"
 rownames(spPCAdatat) <- spPCAdata1[,1]
 colnames(spPCAdatat) <- colnames(spPCAdata[,-1])
-speciesPCA  <-t(spPCAdatat)  ## This is the main biological data for sites
+speciesPCA <- t(spPCAdatat)
 
-## now we have speciesPCA and envirPCA data 
+#Freddie, we need to give more informative titles to the groups we now define from the coordinate grid. For example, in the plots below it would be good to identify what those groups are 
 
-#Merge all data 
-
-PCAdataMain <- merge(x = envirPCA, y = speciesPCA, by = "row.names", all.x = TRUE) 
-rownames(PCAdataMain) = PCAdataMain[,1] #move first column into the row names
-PCAdataMain = PCAdataMain[,-1]
-
-#PCAdataMain is the main data list by siteCode with environmental variables and  abundances of 53 species. The PCAdataMain is the main data file with environmental and species abundance data for 531 sites 
-
-## Then we can do PCA on the sites 
-sitePCAsp = prcomp(na.omit(PCAdataMain[,-c(1:16)]), scale. = TRUE, retx = TRUE) #conduct PCA on species abundance data only. We need to scale the abundance matrix because it is not correlation matrix and otherwise some common species have a huge effect
+## now we do PCA 
+sitePCAsp = prcomp(speciesPCA, scale. = TRUE, retx = TRUE) 
 summary(sitePCAsp)
 plot(sitePCAsp)
 biplot(sitePCAsp, cex = 0.5, expand = 1)
-plot(sitePCAsp$x[,1], sitePCAsp$x[,2])
+plot(sitePCAsp$x[,1], sitePCAsp$x[,2]) # How can we identify the groups better? 
 
+pscores = sitePCAsp$x[,c(1,2)]
+
+groupData = merge(x = groups_bas, y = pscores, by.x = "group", by.y = "row.names", all.x = FALSE) 
+
+# The following is not a very rigorous or automated way to define groups. This done by simple eyeballing of the PCA plot to identify four main groups on PC1 and PC2
+groupData <- groupData %>% mutate(grPC = case_when(groupData$PC1 > 2 ~ 1, (groupData$PC1 <1 & groupData$PC2 < -1) ~  2, (groupData$PC1 <1 & groupData$PC2 > -1) ~  3))
+
+ggmap(tasmania, extent = "panel", legend = "bottomright") +
+geom_point(aes(x = groupData$long, y = groupData$latt), data = groupData, size = 1, color = (groupData$grPC+1)) + # I add +1 to colour because black colour is almost not visible
+scale_y_continuous(limits = c(-44.00, -37.00), expand = c(0, 0))  +
+scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
 
 ```
 
-
+The last chunk looks at various ordinations based on location 
 
 
 ```{r warning=FALSE, message=FALSE, warning=FALSE, eval = FALSE} 
@@ -291,8 +334,8 @@ plot(sitePCAsp$x[,1], sitePCAsp$x[,2])
 LocForPCA <- rls_bas %>%
   filter (TAXONOMIC_NAME %in% MainSpecies) %>%
   filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads" & Location != "Rocky Cape" & Location != "Derwent" & Location != "Derwent Estuary" & Location != "Victoria (other)" & Location != "Tasmania (other)") %>%
-#  filter (Location != "Port Phillip Bay" & Location != "Port Phillip Heads" & Location != "Ninepin External") %>%
-  #    filter(Method == 1) %>%
+    filter (( PHYLUM == "Chordata" & GENUS != "NA" & CLASS != "Ascidiacea") | CLASS == "Cephalopoda") %>% # try grouping on vertebrates only
+      filter(Method == 1) %>%
           filter (year > 2005) %>%
             group_by(Location, SurveyID, TAXONOMIC_NAME) %>%
                 summarise (abund = round(sum(Abundance),3)) %>%
@@ -331,9 +374,9 @@ orditorp(mdstest,display="species",col="red",air=0.01)
 stressplot(mdstest)
 plot(mdstest)
 
-## Or alternatively try k-means clustering on locationxspecies data. This is not a very intersting result, because just a few locations are separated and most others are grouped into 1
+## Or alternatively try k-means clustering on locationxspecies data. This is not a very intersting result, because just a few locations are separated and most others are grouped into 1. K-means clustering always separates Ninepin (internal and external) into its own group 
 
-clus <- kmeans(locationPCA, 3, nstart = 20)
+clus <- kmeans(locationPCA, 5, nstart = 20)
 locationClusters <- clus$cluster
 
 
@@ -355,37 +398,8 @@ scale_x_continuous(limits = c(143.00, 150.00), expand = c(0, 0))
 
 
 
+## some other code bits and pieces
+#temp[, colSums(temp != 0) > 0]
+#SelectVar[, colSums(SelectVar == 0) == 0]
 
-par(mfrow=c(1,1))
-
-
-
-
-
-
-
-
-temp <- siteData2 %>% filter(siteData2$PC1 < 5 & siteData2$PC2 > -5)  #this removes about 4 deviant sites
-
-temp[, colSums(temp != 0) > 0]
-
-
-SelectVar[, colSums(SelectVar == 0) == 0]
-
-sitePCAsp2 = prcomp(na.omit(temp[,c(17:69)]), scale. = TRUE, retx = TRUE) 
-
-PCscores= sitePCAsp$x[,c(1:30)] # first 30 PCs include 70% of variation 
-
-
-
-
-which(sitePCAsp$x== min(sitePCAsp$x[,1]))
-
-sitePCA$rotation[,c(1:2)] #check correlation of variables with the first two axis. Strong correlation show they are most important determinants of grouping
-
-pscores = sitePCA$x[,c(1,2)]
-
-
-biolData = na.omit(PCAdataMain[,-c(3:25)])
-
-
+```
