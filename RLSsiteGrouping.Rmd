@@ -221,7 +221,7 @@ rls_bas$envgroup <- sitesWithGroups$g[match(rls_bas$SiteCode, sitesWithGroups$Si
 
 The results above show that when 14 variables are included, the first two PC components explain 73% of variation, which is good. The PCA shows that the first axis is mostly determined by the contrast between temperature(sstmean, sstmax), salinity, ph against nitrate, phos, silicate and dissox. The three groups visible on PC1 are further separated on PC2, which is loaded by damax (turbidity),  cholorpyl and sstrage agaist sstmin and depth. The four groups define S, Port Phillip Bay, Derwent and the rest. 
 
-Next we can look whether clustering gives us similar groupings s
+Next we can look whether clustering gives us similar groupings sa
 
 ```{r warning=FALSE, message=FALSE, warning=FALSE} 
 clus <- kmeans(matrixForPCA[,-c(1:2)], 3, nstart = 20) # don't include lat long in clustering, only use environmental covariates
